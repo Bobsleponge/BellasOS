@@ -1,0 +1,21 @@
+{
+  "name": "@bellasos/core-auth",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bellasos/contracts": "*",
+    "@bellasos/observability": "*",
+    "@bellasos/db": "*",
+    "jose": "^5.9.6"
+  },
+  "nx": {
+    "tags": ["scope:core"]
+  }
+}

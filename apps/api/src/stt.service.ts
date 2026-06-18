@@ -1,0 +1,113 @@
+import { createLogger } from '@bellasos/observability';
+
+const log = createLogger({ lib: 'stt' });
+
+type WhisperPipeline = (
+  audio: Float32Array | string,
+  options?: Record<string, unknown>,
+) => Promise<{ text?: string }>;
+
+let transcriberPromise: Promise<WhisperPipeline> | null = null;
+let loadingLogged = false;
+
+async function getTranscriber(): Promise<WhisperPipeline> {
+  if (!transcriberPromise) {
+    transcriberPromise = (async () => {
+      if (!loadingLogged) {
+        log.info('loading local whisper model (first request may take a few minutes)');
+        loadingLogged = true;
+      }
+      const { pipeline: createPipeline, env } = await import('@xenova/transformers');
+      if (process.env.TRANSFORMERS_CACHE) {
+        env.cacheDir = process.env.TRANSFORMERS_CACHE;
+      }
+      return createPipeline(
+        'automatic-speech-recognition',
+        'Xenova/whisper-tiny.en',
+      ) as Promise<WhisperPipeline>;
+    })().catch((err) => {
+      transcriberPromise = null;
+      throw err;
+    });
+  }
+  return transcriberPromise;
+}
+
+function decodeWavPcm16(buffer: Buffer): { samples: Float32Array; sampleRate: number } {
+  if (buffer.length < 44 || buffer.toString('ascii', 0, 4) !== 'RIFF') {
+    throw new Error('Invalid WAV audio');
+  }
+
+  let offset = 12;
+  let sampleRate = 16_000;
+  let numChannels = 1;
+  let bitsPerSample = 16;
+  let dataOffset = 0;
+  let dataSize = 0;
+
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString('ascii', offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    if (chunkId === 'fmt ') {
+      numChannels = buffer.readUInt16LE(offset + 10);
+      sampleRate = buffer.readUInt32LE(offset + 12);
+      bitsPerSample = buffer.readUInt16LE(offset + 22);
+    } else if (chunkId === 'data') {
+      dataOffset = offset + 8;
+      dataSize = chunkSize;
+      break;
+    }
+    offset += 8 + chunkSize;
+  }
+
+  if (!dataSize || bitsPerSample !== 16) {
+    throw new Error('Unsupported WAV format (expected 16-bit PCM)');
+  }
+
+  const frameCount = Math.floor(dataSize / (bitsPerSample / 8) / numChannels);
+  const samples = new Float32Array(frameCount);
+  for (let i = 0; i < frameCount; i++) {
+    let sum = 0;
+    for (let ch = 0; ch < numChannels; ch++) {
+      const pos = dataOffset + (i * numChannels + ch) * 2;
+      sum += buffer.readInt16LE(pos) / 32768;
+    }
+    samples[i] = sum / numChannels;
+  }
+
+  return { samples, sampleRate };
+}
+
+function resample(input: Float32Array, fromRate: number, toRate: number): Float32Array {
+  if (fromRate === toRate) return input;
+  const ratio = fromRate / toRate;
+  const outLength = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i++) {
+    const srcIdx = i * ratio;
+    const idx = Math.floor(srcIdx);
+    const frac = srcIdx - idx;
+    const a = input[idx] ?? 0;
+    const b = input[idx + 1] ?? a;
+    output[i] = a * (1 - frac) + b * frac;
+  }
+  return output;
+}
+
+export async function transcribeWav(buffer: Buffer): Promise<string> {
+  if (!buffer.length) return '';
+  const { samples, sampleRate } = decodeWavPcm16(buffer);
+  const audio = resample(samples, sampleRate, 16_000);
+  if (audio.length < 16_000 * 0.25) {
+    return '';
+  }
+
+  const transcriber = await getTranscriber();
+  const out = await transcriber(audio, {
+    language: 'english',
+    task: 'transcribe',
+    chunk_length_s: 30,
+    stride_length_s: 5,
+  });
+  return (out.text ?? '').trim();
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@bellasos/core-registry",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bellasos/contracts": "*",
+    "@bellasos/observability": "*",
+    "@bellasos/db": "*",
+    "@bellasos/core-config": "*",
+    "@bellasos/core-audit": "*"
+  },
+  "nx": {
+    "tags": ["scope:core"]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@bellasos/agents-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bellasos/contracts": "*",
+    "@bellasos/observability": "*",
+    "@bellasos/agents-framework": "*"
+  },
+  "nx": {
+    "tags": ["scope:agent"]
+  }
+}

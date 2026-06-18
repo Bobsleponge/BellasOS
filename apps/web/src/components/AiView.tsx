@@ -1,0 +1,424 @@
+'use client';
+
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, type NewModel } from '@/lib/api';
+import { Panel } from './Panel';
+
+const PROVIDERS = [
+  'openai',
+  'anthropic',
+  'google',
+  'deepseek',
+  'ollama',
+  'mock',
+];
+
+const ENV_KEY: Record<string, string> = {
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  google: 'GOOGLE_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  ollama: 'OLLAMA_BASE_URL (runs locally, no key)',
+  mock: 'none (offline fallback)',
+};
+
+export function AiView() {
+  const qc = useQueryClient();
+  const { data: models } = useQuery({ queryKey: ['models'], queryFn: api.models });
+  const { data: providers } = useQuery({
+    queryKey: ['providers'],
+    queryFn: api.providers,
+  });
+
+  const toggle = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      enabled ? api.disableModel(id) : api.enableModel(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['models'] }),
+  });
+
+  const discover = useMutation({
+    mutationFn: () => api.discoverModels(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['models'] });
+      qc.invalidateQueries({ queryKey: ['providers'] });
+    },
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* Provider status */}
+      <Panel title="Providers" subtitle="credentials">
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => discover.mutate()}
+            disabled={discover.isPending}
+            className="text-xs px-3 py-1.5 rounded-lg border border-edge text-muted hover:text-accent hover:border-accent disabled:opacity-50"
+          >
+            {discover.isPending ? 'Scanning...' : 'Scan local (Ollama) models'}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+          {(providers ?? []).map((p) => (
+            <div
+              key={p.provider}
+              className="flex items-center gap-2 bg-panel2 border border-edge rounded-lg px-3 py-2"
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${p.configured ? 'bg-green-400' : 'bg-muted'}`}
+              />
+              <div className="min-w-0">
+                <div className="text-sm text-white capitalize">{p.provider}</div>
+                <div className="text-[11px] text-muted truncate">
+                  {p.configured ? 'configured' : ENV_KEY[p.provider] ?? 'set API key'}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted mt-3">
+          Configure providers below or via <code className="text-accent">.env</code>.
+          Ollama uses a base URL (e.g. http://localhost:5001).
+        </p>
+        <ProviderCredentials />
+        <RoutingStrategyPanel />
+        <TestCompletionPanel />
+      </Panel>
+
+      {/* Models table */}
+      <Panel title="Models" subtitle="registry">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase text-muted border-b border-edge">
+                <th className="py-2 pr-3">Model</th>
+                <th className="py-2 pr-3">Provider</th>
+                <th className="py-2 pr-3">Capabilities</th>
+                <th className="py-2 pr-3">Context</th>
+                <th className="py-2 pr-3">Cost in/out</th>
+                <th className="py-2 pr-3">State</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(models ?? []).map((m) => (
+                <tr key={m.id} className="border-b border-edge/50">
+                  <td className="py-2 pr-3 text-white">{m.displayName}</td>
+                  <td className="py-2 pr-3 text-muted">
+                    {m.local ? `${m.provider} (local)` : m.provider}
+                  </td>
+                  <td className="py-2 pr-3 text-muted text-xs">
+                    {m.capabilities.join(', ')}
+                  </td>
+                  <td className="py-2 pr-3 text-muted">
+                    {(m.contextWindow / 1000).toFixed(0)}k
+                  </td>
+                  <td className="py-2 pr-3 text-muted">
+                    ${m.cost.inputPerMTokensUsd}/${m.cost.outputPerMTokensUsd}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span
+                      className={m.enabled ? 'text-green-400' : 'text-muted'}
+                    >
+                      {m.enabled ? 'enabled' : 'disabled'}
+                    </span>
+                  </td>
+                  <td className="py-2 text-right">
+                    <button
+                      onClick={() =>
+                        toggle.mutate({ id: m.id, enabled: m.enabled })
+                      }
+                      className="text-xs px-2 py-1 rounded border border-edge text-muted hover:text-accent hover:border-accent"
+                    >
+                      {m.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!models?.length && (
+                <tr>
+                  <td colSpan={7} className="py-3 text-muted text-xs">
+                    No models registered.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <AddModelForm />
+    </div>
+  );
+}
+
+function ProviderCredentials() {
+  const qc = useQueryClient();
+  const [keys, setKeys] = useState<Record<string, string>>({});
+  const save = useMutation({
+    mutationFn: ({ provider, value }: { provider: string; value: string }) =>
+      api.setProviderCredential(provider, value),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['providers'] });
+      qc.invalidateQueries({ queryKey: ['models'] });
+    },
+  });
+  const test = useMutation({
+    mutationFn: (provider: string) => api.testProvider(provider),
+  });
+  const field =
+    'flex-1 bg-panel2 border border-edge rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent';
+  return (
+    <div className="mt-4 space-y-2">
+      <p className="text-xs text-accent uppercase tracking-wide">Connect providers</p>
+      {PROVIDERS.filter((p) => p !== 'mock').map((p) => (
+        <div key={p} className="flex flex-wrap gap-2 items-center">
+          <span className="text-xs text-muted w-20 capitalize">{p}</span>
+          <input
+            type="password"
+            className={field}
+            placeholder={p === 'ollama' ? 'http://localhost:5001' : 'API key'}
+            onChange={(e) => setKeys((k) => ({ ...k, [p]: e.target.value }))}
+          />
+          <button
+            onClick={() => keys[p] && save.mutate({ provider: p, value: keys[p]! })}
+            disabled={!keys[p] || save.isPending}
+            className="text-xs px-2 py-1 rounded border border-edge text-accent"
+          >
+            Save
+          </button>
+          <button
+            onClick={() => test.mutate(p)}
+            className="text-xs px-2 py-1 rounded border border-edge text-muted"
+          >
+            Test
+          </button>
+          {test.data && test.variables === p && (
+            <span className={`text-xs ${test.data.ok ? 'text-green-400' : 'text-red-400'}`}>
+              {test.data.ok ? 'OK' : test.data.error}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RoutingStrategyPanel() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['routing'], queryFn: api.getRoutingStrategy });
+  const set = useMutation({
+    mutationFn: (strategy: string) => api.setRoutingStrategy(strategy),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['routing'] }),
+  });
+  const strategies = ['quality', 'cost', 'latency', 'privacy'];
+  return (
+    <div className="mt-4">
+      <p className="text-xs text-accent uppercase tracking-wide mb-2">Routing strategy</p>
+      <select
+        value={data?.strategy ?? 'quality'}
+        onChange={(e) => set.mutate(e.target.value)}
+        className="bg-panel2 border border-edge rounded-lg px-3 py-2 text-sm"
+      >
+        {strategies.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function TestCompletionPanel() {
+  const [prompt, setPrompt] = useState('Say hello in one word.');
+  const [result, setResult] = useState('');
+  const run = useMutation({
+    mutationFn: () => api.complete(prompt),
+    onSuccess: (r) => setResult(`${r.provider}/${r.model}: ${r.text}`),
+    onError: (e) => setResult(`Error: ${(e as Error).message}`),
+  });
+  return (
+    <div className="mt-4">
+      <p className="text-xs text-accent uppercase tracking-wide mb-2">Test completion</p>
+      <div className="flex gap-2">
+        <input
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          className="flex-1 bg-panel2 border border-edge rounded-lg px-3 py-2 text-sm"
+        />
+        <button
+          onClick={() => run.mutate()}
+          disabled={run.isPending}
+          className="bg-accent text-bg font-semibold rounded-lg px-3 py-2 text-sm"
+        >
+          Test
+        </button>
+      </div>
+      {result && <p className="text-xs text-muted mt-2">{result}</p>}
+    </div>
+  );
+}
+
+function AddModelForm() {
+  const qc = useQueryClient();
+  const [form, setForm] = useState<NewModel>({
+    id: '',
+    provider: 'openai',
+    displayName: '',
+    capabilities: ['chat'],
+    contextWindow: 128000,
+    local: false,
+    enabled: true,
+    cost: { inputPerMTokensUsd: 0, outputPerMTokensUsd: 0 },
+  });
+  const [capsText, setCapsText] = useState('chat, reasoning');
+  const [msg, setMsg] = useState('');
+
+  const add = useMutation({
+    mutationFn: () =>
+      api.registerModel({
+        ...form,
+        capabilities: capsText
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['models'] });
+      setMsg(`Added ${form.id}.`);
+      setForm({ ...form, id: '', displayName: '' });
+    },
+    onError: (e) => setMsg(`Error: ${(e as Error).message}`),
+  });
+
+  function set<K extends keyof NewModel>(key: K, value: NewModel[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  const field = 'w-full bg-panel2 border border-edge rounded-lg px-3 py-2 text-sm outline-none focus:border-accent';
+
+  return (
+    <Panel title="Add / register a model" subtitle="how-to">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-muted mb-1">Model ID</label>
+          <input
+            className={field}
+            value={form.id}
+            onChange={(e) => set('id', e.target.value)}
+            placeholder="e.g. gpt-5.1 or my-local-model"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-muted mb-1">Display name</label>
+          <input
+            className={field}
+            value={form.displayName}
+            onChange={(e) => set('displayName', e.target.value)}
+            placeholder="e.g. GPT-5.1"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-muted mb-1">Provider</label>
+          <select
+            className={field}
+            value={form.provider}
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                provider: e.target.value,
+                local: e.target.value === 'ollama' || e.target.value === 'mock',
+              }))
+            }
+          >
+            {PROVIDERS.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-muted mb-1">
+            Capabilities (comma-separated)
+          </label>
+          <input
+            className={field}
+            value={capsText}
+            onChange={(e) => setCapsText(e.target.value)}
+            placeholder="chat, reasoning, vision, tool_use, embedding"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-muted mb-1">Context window</label>
+          <input
+            type="number"
+            className={field}
+            value={form.contextWindow}
+            onChange={(e) => set('contextWindow', Number(e.target.value))}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-muted mb-1">Cost in ($/M)</label>
+            <input
+              type="number"
+              step="0.01"
+              className={field}
+              value={form.cost.inputPerMTokensUsd}
+              onChange={(e) =>
+                set('cost', {
+                  ...form.cost,
+                  inputPerMTokensUsd: Number(e.target.value),
+                })
+              }
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted mb-1">Cost out ($/M)</label>
+            <input
+              type="number"
+              step="0.01"
+              className={field}
+              value={form.cost.outputPerMTokensUsd}
+              onChange={(e) =>
+                set('cost', {
+                  ...form.cost,
+                  outputPerMTokensUsd: Number(e.target.value),
+                })
+              }
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 mt-3">
+        <label className="flex items-center gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={form.local}
+            onChange={(e) => set('local', e.target.checked)}
+          />
+          Local / privacy-safe
+        </label>
+        <button
+          onClick={() => add.mutate()}
+          disabled={add.isPending || !form.id || !form.displayName}
+          className="bg-accent text-bg font-semibold rounded-lg px-4 py-2 text-sm disabled:opacity-50"
+        >
+          {add.isPending ? 'Adding...' : 'Add model'}
+        </button>
+        {msg && <span className="text-xs text-muted">{msg}</span>}
+      </div>
+
+      <p className="text-xs text-muted mt-3">
+        The model becomes immediately available to the routing engine. For cloud
+        providers, make sure the provider above shows{' '}
+        <span className="text-green-400">configured</span> (its API key is set in{' '}
+        <code className="text-accent">.env</code>). Without a database, additions
+        last until the next restart; with Postgres they persist.
+      </p>
+    </Panel>
+  );
+}

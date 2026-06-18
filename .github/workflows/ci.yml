@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: bellasos
+          POSTGRES_PASSWORD: bellasos
+          POSTGRES_DB: bellasos
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U bellasos"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://bellasos:bellasos@localhost:5432/bellasos
+      AUTH_MODE: dev
+      NATS_URL: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci || npm install
+      - name: Run DB migrations
+        run: npm run db:migrate
+      - name: Typecheck (Nx affected)
+        run: npx nx affected -t typecheck --base=origin/main~1 || npx nx run-many -t typecheck
+      - name: Test (Nx affected)
+        run: npx nx affected -t test --base=origin/main~1 || npx nx run-many -t test
+      - name: Lint (Nx affected)
+        run: npx nx affected -t lint --base=origin/main~1 || echo "lint optional"

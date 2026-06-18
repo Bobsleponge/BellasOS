@@ -1,0 +1,56 @@
+name: bellasos
+
+# Production-style overlay: builds and runs the app containers, runs migrations
+# as a one-shot job before the API and worker start. Secrets come from .env.
+
+services:
+  migrate:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+      target: runner
+    command: ['npm', 'run', 'db:migrate']
+    env_file: ../../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+      target: runner
+    command: ['node', 'apps/api/dist/main.js']
+    env_file: ../../.env
+    ports:
+      - '4000:4000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+      target: runner
+    command: ['node', 'apps/worker/dist/main.js']
+    env_file: ../../.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+    env_file: ../../.env
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api

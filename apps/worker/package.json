@@ -1,0 +1,21 @@
+{
+  "name": "@bellasos/worker",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bellasos/contracts": "*",
+    "@bellasos/observability": "*",
+    "@bellasos/runtime": "*",
+    "dotenv": "^16.4.7"
+  },
+  "nx": {
+    "tags": ["scope:app"]
+  }
+}

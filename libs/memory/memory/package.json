@@ -1,0 +1,20 @@
+{
+  "name": "@bellasos/memory",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bellasos/contracts": "*",
+    "@bellasos/observability": "*",
+    "@bellasos/db": "*",
+    "ioredis": "^5.4.1"
+  },
+  "nx": {
+    "tags": ["scope:memory"]
+  }
+}

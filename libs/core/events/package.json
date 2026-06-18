@@ -1,0 +1,20 @@
+{
+  "name": "@bellasos/core-events",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bellasos/contracts": "*",
+    "@bellasos/observability": "*",
+    "nats": "^2.28.2"
+  },
+  "nx": {
+    "tags": ["scope:core"]
+  }
+}

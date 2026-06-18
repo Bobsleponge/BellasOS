@@ -1,0 +1,63 @@
+{
+  "root": true,
+  "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/.next/**"],
+  "plugins": ["@nx"],
+  "overrides": [
+    {
+      "files": ["*.ts", "*.tsx", "*.js", "*.jsx"],
+      "rules": {
+        "@nx/enforce-module-boundaries": [
+          "error",
+          {
+            "enforceBuildableLibDependencyConstraints": true,
+            "allow": [],
+            "depConstraints": [
+              {
+                "sourceTag": "scope:shared",
+                "onlyDependOnLibsWithTags": ["scope:shared"]
+              },
+              {
+                "sourceTag": "scope:core",
+                "onlyDependOnLibsWithTags": ["scope:core", "scope:shared"]
+              },
+              {
+                "sourceTag": "scope:ai",
+                "onlyDependOnLibsWithTags": ["scope:ai", "scope:core", "scope:shared"]
+              },
+              {
+                "sourceTag": "scope:memory",
+                "onlyDependOnLibsWithTags": ["scope:memory", "scope:core", "scope:shared"]
+              },
+              {
+                "sourceTag": "scope:agent",
+                "onlyDependOnLibsWithTags": [
+                  "scope:agent",
+                  "scope:ai",
+                  "scope:memory",
+                  "scope:core",
+                  "scope:shared"
+                ]
+              },
+              {
+                "sourceTag": "scope:module",
+                "onlyDependOnLibsWithTags": ["scope:core", "scope:shared"]
+              },
+              {
+                "sourceTag": "scope:app",
+                "onlyDependOnLibsWithTags": [
+                  "scope:app",
+                  "scope:module",
+                  "scope:agent",
+                  "scope:ai",
+                  "scope:memory",
+                  "scope:core",
+                  "scope:shared"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
