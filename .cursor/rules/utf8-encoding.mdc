@@ -1,0 +1,29 @@
+---
+description: Keep all source files UTF-8 (never UTF-16 on Windows)
+alwaysApply: true
+---
+
+# UTF-8 encoding (Windows)
+
+Cursor/VS Code on Windows sometimes saves files as **UTF-16 LE**, which breaks Node, dotenv, Next.js, and PostCSS (null bytes, invalid exports).
+
+## Rules
+
+1. All text files must be **UTF-8 without BOM**.
+2. After creating or editing files, run `npm run encoding:check`.
+3. If check fails, run `npm run encoding:fix` before committing.
+4. Prefer writing files via Node (`writeFile(..., 'utf8')`) or PowerShell UTF-8 when bulk-fixing on Windows.
+
+## PowerShell one-liner (manual fix)
+
+```powershell
+$utf8 = New-Object System.Text.UTF8Encoding $false
+$text = [IO.File]::ReadAllText($path, [Text.Encoding]::Unicode)
+[IO.File]::WriteAllText($path, $text, $utf8)
+```
+
+## Git hook (one-time setup)
+
+```bash
+git config core.hooksPath .githooks
+```

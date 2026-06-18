@@ -47,6 +47,11 @@ npm run dev:worker
 npm run dev:web      # http://localhost:3000
 ```
 
+**Windows encoding:** Cursor/VS Code can accidentally save files as UTF-16, which
+breaks Node and Next.js. The repo enforces UTF-8 via `npm run encoding:check` (also
+in CI). Fix bad files with `npm run encoding:fix`. Enable the git hook once:
+`git config core.hooksPath .githooks`.
+
 The platform is designed to **degrade gracefully**: if Postgres or NATS are not
 reachable, it falls back to in-memory adapters so you can boot and explore
 without the full stack.

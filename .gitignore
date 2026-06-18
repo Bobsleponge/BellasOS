@@ -16,3 +16,4 @@ api.err
 web.err
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json

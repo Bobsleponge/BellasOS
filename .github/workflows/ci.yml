@@ -37,6 +37,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci || npm install
+      - name: Verify UTF-8 text encoding
+        run: npm run encoding:check
       - name: Run DB migrations
         run: npm run db:migrate
       - name: Typecheck (Nx affected)
