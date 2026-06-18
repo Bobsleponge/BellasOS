@@ -2,13 +2,14 @@
 
 import { createContext, useCallback, useContext, useEffect, type ReactNode } from 'react';
 import { useJarvisSession } from '@/hooks/useJarvisSession';
-import { useLocalSpeechInput } from '@/hooks/useLocalSpeechInput';
+import { useHybridSpeechInput } from '@/hooks/useHybridSpeechInput';
 import { useShellStore } from '@/stores/shellStore';
 
 interface VoiceSessionContextValue {
   voiceSessionActive: boolean;
   listening: boolean;
   processing: boolean;
+  mode: string;
   supported: boolean;
   eqState: string;
   speechError: string | null;
@@ -44,8 +45,8 @@ function VoiceSessionController({ children }: { children: ReactNode }) {
     [setEqState],
   );
 
-  const { listening, processing, start, stop, supported, error, clearError } =
-    useLocalSpeechInput(onSpeech, onProcessing);
+  const { listening, processing, start, stop, supported, error, clearError, mode } =
+    useHybridSpeechInput(onSpeech, onProcessing);
 
   const shouldListen =
     voiceSessionActive &&
@@ -121,6 +122,7 @@ function VoiceSessionController({ children }: { children: ReactNode }) {
         voiceSessionActive,
         listening,
         processing,
+        mode,
         supported,
         eqState,
         speechError,

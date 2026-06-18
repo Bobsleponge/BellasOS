@@ -5,7 +5,7 @@ const log = createLogger({ lib: 'stt' });
 type WhisperPipeline = (
   audio: Float32Array | string,
   options?: Record<string, unknown>,
-) => Promise<{ text?: string }>;
+) => Promise<{ text?: string; chunks?: Array<{ text?: string }> }>;
 
 let transcriberPromise: Promise<WhisperPipeline> | null = null;
 let loadingLogged = false;
@@ -94,20 +94,48 @@ function resample(input: Float32Array, fromRate: number, toRate: number): Float3
   return output;
 }
 
+function normalizeAudio(samples: Float32Array): Float32Array {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    peak = Math.max(peak, Math.abs(samples[i] ?? 0));
+  }
+  if (peak < 0.001) return samples;
+  const gain = 0.95 / peak;
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    out[i] = Math.max(-1, Math.min(1, (samples[i] ?? 0) * gain));
+  }
+  return out;
+}
+
+function extractText(out: { text?: string; chunks?: Array<{ text?: string }> }): string {
+  const direct = (out.text ?? '').trim();
+  if (direct) return direct;
+  if (out.chunks?.length) {
+    return out.chunks.map((c) => c.text ?? '').join('').trim();
+  }
+  return '';
+}
+
 export async function transcribeWav(buffer: Buffer): Promise<string> {
   if (!buffer.length) return '';
   const { samples, sampleRate } = decodeWavPcm16(buffer);
-  const audio = resample(samples, sampleRate, 16_000);
-  if (audio.length < 16_000 * 0.25) {
+  let audio = resample(samples, sampleRate, 16_000);
+  audio = normalizeAudio(audio);
+  const durationS = audio.length / 16_000;
+  if (durationS < 0.15) {
     return '';
   }
 
   const transcriber = await getTranscriber();
-  const out = await transcriber(audio, {
-    language: 'english',
-    task: 'transcribe',
-    chunk_length_s: 30,
-    stride_length_s: 5,
-  });
-  return (out.text ?? '').trim();
+  const opts: Record<string, unknown> = { return_timestamps: false };
+  if (durationS > 25) {
+    opts.chunk_length_s = 30;
+    opts.stride_length_s = 5;
+  }
+
+  const out = await transcriber(audio, opts);
+  const text = extractText(out);
+  log.info('transcribed', { durationS: Math.round(durationS * 10) / 10, chars: text.length });
+  return text;
 }

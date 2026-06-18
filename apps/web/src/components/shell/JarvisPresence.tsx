@@ -25,6 +25,7 @@ export function JarvisPresence() {
     processing,
     supported,
     speechError,
+    mode,
     toggleVoiceSession,
   } = useVoiceSession();
   const { sendMessage } = useJarvisSession();
@@ -115,7 +116,7 @@ export function JarvisPresence() {
       )}
       {voiceSessionActive && (
         <p className="text-xs text-muted">
-          Speak naturally, then pause ~1.5s. The speech model loads on the server the first time (can take a few minutes).
+          Speak a full sentence, then pause ~2 seconds. Mode: {mode === 'browser' ? 'browser speech' : 'local Whisper'}.
         </p>
       )}
     </div>
