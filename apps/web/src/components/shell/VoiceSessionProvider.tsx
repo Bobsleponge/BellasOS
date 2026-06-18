@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, type ReactNode } from 'react';
 import { useJarvisSession } from '@/hooks/useJarvisSession';
 import { useHybridSpeechInput } from '@/hooks/useHybridSpeechInput';
+import { preloadJarvisVoice } from '@/lib/speechOutput';
 import { canAcceptSpeechInput, useShellStore } from '@/stores/shellStore';
 import { api } from '@/lib/api';
 
@@ -16,6 +17,8 @@ interface VoiceSessionContextValue {
   eqState: string;
   speechError: string | null;
   toggleMicListening: () => void;
+  stopJarvis: () => void;
+  canStopJarvis: boolean;
 }
 
 const VoiceSessionContext = createContext<VoiceSessionContextValue | null>(null);
@@ -30,7 +33,12 @@ function VoiceSessionController({ children }: { children: ReactNode }) {
   const setHeardCaption = useShellStore((s) => s.setHeardCaption);
   const speechError = useShellStore((s) => s.speechError);
   const setSpeechError = useShellStore((s) => s.setSpeechError);
-  const { sendMessage } = useJarvisSession();
+  const jarvisPending = useShellStore((s) => s.jarvisPending);
+  const { sendMessage, cancelTurn } = useJarvisSession();
+
+  useEffect(() => {
+    preloadJarvisVoice();
+  }, []);
 
   const onSpeech = useCallback(
     (spoken: string) => {
@@ -47,8 +55,13 @@ function VoiceSessionController({ children }: { children: ReactNode }) {
 
   const onProcessing = useCallback(
     (active: boolean) => {
-      if (active) setEqState('transcribing');
-      else if (useShellStore.getState().micListening) {
+      const current = useShellStore.getState().eqState;
+      const pending = useShellStore.getState().jarvisPending;
+      if (pending || current === 'thinking' || current === 'speaking') return;
+
+      if (active) {
+        setEqState('transcribing');
+      } else if (useShellStore.getState().micListening) {
         setEqState('listening');
         setHeardCaption(null);
       }
@@ -58,8 +71,28 @@ function VoiceSessionController({ children }: { children: ReactNode }) {
 
   const canCapture = micListening && canAcceptSpeechInput(eqState);
 
-  const { listening, processing, start, stop, supported, error, clearError, mode } =
+  const { listening, processing, start, stop, cancel, supported, error, clearError, mode } =
     useHybridSpeechInput(onSpeech, onProcessing, onHeard, canCapture);
+
+  const canStopJarvis =
+    processing ||
+    jarvisPending ||
+    eqState === 'transcribing' ||
+    eqState === 'thinking' ||
+    eqState === 'speaking' ||
+    eqState === 'heard';
+
+  const stopJarvis = useCallback(() => {
+    cancel();
+    const state = useShellStore.getState();
+    const midTurn =
+      state.jarvisPending || state.eqState === 'thinking' || state.eqState === 'speaking';
+    if (midTurn) {
+      cancelTurn('Stopped — I did not act on that. Say it again when you are ready.', true);
+      return;
+    }
+    cancelTurn('Stopped — say that again when you are ready.', false);
+  }, [cancel, cancelTurn]);
 
   const shouldCapture = canCapture && !processing;
 
@@ -136,6 +169,8 @@ function VoiceSessionController({ children }: { children: ReactNode }) {
         eqState,
         speechError,
         toggleMicListening,
+        stopJarvis,
+        canStopJarvis,
       }}
     >
       {children}

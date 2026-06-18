@@ -9,6 +9,7 @@ import {
   type RoutingStrategy,
 } from '@bellasos/contracts';
 
+export * from './jarvis-hub';
 export interface RoutingContext {
   /** Returns true if the provider has credentials / is reachable. */
   isProviderConfigured(type: ProviderType): boolean;

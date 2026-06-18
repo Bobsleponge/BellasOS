@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { Hand, Mic, MicOff } from 'lucide-react';
+import { Hand, Mic, MicOff, Terminal } from 'lucide-react';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useVoiceSession } from '@/components/shell/VoiceSessionProvider';
@@ -14,11 +16,9 @@ export function Taskbar() {
   const eqState = useShellStore((s) => s.eqState);
   const gestureEnabled = useShellStore((s) => s.gestureEnabled);
   const setGestureEnabled = useShellStore((s) => s.setGestureEnabled);
-  const windows = useShellStore((s) => s.windows);
-  const focusWindow = useShellStore((s) => s.focusWindow);
   const micListening = useShellStore((s) => s.micListening);
   const { toggleMicListening, supported } = useVoiceSession();
-  const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.health });
+  const { data: health } = useQuery({ queryKey: queryKeys.health, queryFn: api.health });
 
   useEffect(() => {
     const tick = () =>
@@ -30,33 +30,36 @@ export function Taskbar() {
     return () => clearInterval(t);
   }, []);
 
+  const dbOk = health?.db;
+  const degradedModules =
+    health?.modules.filter((m) => m.status !== 'enabled' && m.status !== 'started') ?? [];
+
   return (
     <footer className="fixed bottom-0 inset-x-0 h-14 glass-panel border-t border-white/10 flex items-center justify-between px-4 z-50">
       <div className="flex items-center gap-3">
         <span className="text-sm font-semibold text-white">
           Bellas<span className="text-accent">OS</span>
         </span>
-        <Badge variant={health?.db ? 'success' : 'muted'}>
-          {health?.status === 'ok' ? 'online' : '...'}
-        </Badge>
+        <Link href="/console?view=overview">
+          <Badge variant={health?.status === 'ok' ? (dbOk ? 'success' : 'muted') : 'muted'}>
+            {health?.status === 'ok' ? (dbOk ? 'online' : 'in-memory') : '...'}
+          </Badge>
+        </Link>
+        {degradedModules.length > 0 && (
+          <Link href="/console?view=overview">
+            <Badge variant="muted">{degradedModules.length} module issue(s)</Badge>
+          </Link>
+        )}
         <Badge variant="default">{eqState}</Badge>
       </div>
 
-      <div className="flex items-center gap-1 overflow-x-auto max-w-[50%]">
-        {windows.map((w) => (
-          <Button
-            key={w.id}
-            variant="ghost"
-            size="sm"
-            onClick={() => focusWindow(w.id)}
-            className={w.minimized ? 'opacity-50' : ''}
-          >
-            {w.title}
-          </Button>
-        ))}
-      </div>
-
       <div className="flex items-center gap-3">
+        <Link href="/console?view=overview">
+          <Button variant="ghost" size="sm">
+            <Terminal className="w-4 h-4 mr-1" />
+            Console
+          </Button>
+        </Link>
         <Button
           variant={micListening ? 'default' : 'ghost'}
           size="sm"

@@ -208,11 +208,45 @@ function VoiceWidget() {
   );
 }
 
+function FinanceInvestmentsWidget({ spec }: { spec: WidgetSpec }) {
+  const { data } = useAction<{
+    totalValue: number;
+    totalGainPercent: number;
+    holdings: number;
+    baseCurrency: string;
+    diversification: { byAccount: Record<string, number> };
+  }>(spec.moduleId, spec.dataAction);
+  return (
+    <div className="space-y-3">
+      <Stat
+        label="Total value"
+        value={`${data?.baseCurrency ?? 'ZAR'} ${(data?.totalValue ?? 0).toLocaleString()}`}
+      />
+      <Stat
+        label="Gain"
+        value={`${(data?.totalGainPercent ?? 0) >= 0 ? '+' : ''}${(data?.totalGainPercent ?? 0).toFixed(1)}%`}
+      />
+      <ul className="space-y-1">
+        {Object.entries(data?.diversification?.byAccount ?? {}).map(([account, pct]) => (
+          <li key={account} className="text-xs flex justify-between">
+            <span className="text-muted">{account}</span>
+            <span>{pct}%</span>
+          </li>
+        ))}
+        {!Object.keys(data?.diversification?.byAccount ?? {}).length && (
+          <Empty text="Import investments from Finance-Tracker." />
+        )}
+      </ul>
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (p: { spec: WidgetSpec }) => React.ReactNode> = {
   AiUsageWidget,
   ResearchWidget,
   IntelligenceWidget,
   PortfolioWidget,
+  FinanceInvestmentsWidget,
   SocialWidget,
   AutomationWidget,
   CameraWidget,

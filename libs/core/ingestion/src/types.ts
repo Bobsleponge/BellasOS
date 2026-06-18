@@ -1,4 +1,13 @@
-export type IngestSource = 'web_search' | 'rss' | 'market' | 'url_fetch';
+export type IngestSource =
+  | 'web_search'
+  | 'rss'
+  | 'rss_feed'
+  | 'market'
+  | 'yahoo_finance'
+  | 'sec_edgar'
+  | 'reddit'
+  | 'finnhub'
+  | 'url_fetch';
 
 export interface IngestDocument {
   id: string;
@@ -17,4 +26,22 @@ export interface IngestSourceRef {
   url?: string;
   title: string;
   fetchedAt: string;
+  source?: IngestSource;
+}
+
+export interface IngestFeedDef {
+  id: string;
+  name: string;
+  url: string;
+  tags: string[];
+  region?: string;
+}
+
+export interface IngestConnectorStatus {
+  id: string;
+  name: string;
+  enabled: boolean;
+  requiresKey: boolean;
+  configured: boolean;
+  description: string;
 }

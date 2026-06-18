@@ -1,21 +1,42 @@
-const BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:4000/api/v1';
-
 export interface ApiResponse<T> {
   data: T | null;
   error: { code: string; message: string; details?: unknown } | null;
   meta: { traceId: string; timestamp: string };
 }
 
+export interface SettingSpec {
+  key: string;
+  type: string;
+  label: string;
+  description?: string;
+  default?: unknown;
+  secret?: boolean;
+}
+
+export const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:4000/api/v1';
+
+const BASE = API_BASE;
+
 async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-    cache: 'no-store',
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+      cache: 'no-store',
+    });
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      throw err;
+    }
+    throw new Error(
+      `Cannot reach BellasOS API at ${BASE}. Start the API with "npm run dev:api". (${(err as Error).message})`,
+    );
+  }
   const json = (await res.json()) as ApiResponse<T>;
   if (json.error) throw new Error(`${json.error.code}: ${json.error.message}`);
   return json.data as T;
@@ -58,17 +79,22 @@ export const api = {
       body: JSON.stringify(model),
     }),
   invoke: <T>(moduleId: string, action: string, input: unknown) =>
-    request<T>(`/modules/${moduleId}/actions/${action}`, {
+    request<T>(
+      `/modules/${encodeURIComponent(moduleId)}/actions/${encodeURIComponent(action)}`,
+      {
       method: 'POST',
       body: JSON.stringify(input ?? {}),
-    }),
+    },
+    ),
   command: <T>(
     agentType: string,
     payload: { prompt?: string; taskType?: string; input?: unknown },
+    signal?: AbortSignal,
   ) =>
     request<T>('/agents/command', {
       method: 'POST',
       body: JSON.stringify({ agentType, ...payload }),
+      signal,
     }),
   complete: (prompt: string, model?: string) =>
     request<{ text: string; model: string; provider: string }>(
@@ -121,6 +147,33 @@ export const api = {
       `/integrations/social/${encodeURIComponent(platform)}/disconnect`,
       { method: 'DELETE' },
     ),
+  connectPortfolio: (body: { syncUrl: string; appName: string; apiKey?: string }) =>
+    request<{
+      connected: boolean;
+      appName: string;
+      syncUrl: string;
+      apiKey: string;
+      webhookUrl: string;
+      exportUrl: string;
+    }>('/integrations/portfolio/connect', { method: 'POST', body: JSON.stringify(body) }),
+  disconnectPortfolio: () =>
+    request<{ disconnected: boolean }>('/integrations/portfolio/disconnect', {
+      method: 'DELETE',
+    }),
+  connectFinanceTracker: (body: { baseUrl?: string; apiKey: string }) =>
+    request<{
+      connected: boolean;
+      baseUrl?: string;
+      user?: { email?: string; name?: string };
+      error?: string;
+    }>('/integrations/finance-tracker/connect', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  disconnectFinanceTracker: () =>
+    request<{ disconnected: boolean }>('/integrations/finance-tracker/disconnect', {
+      method: 'DELETE',
+    }),
   enableModule: (id: string) =>
     request<{ id: string; status: string }>(`/modules/${encodeURIComponent(id)}/enable`, {
       method: 'POST',
@@ -130,13 +183,74 @@ export const api = {
       method: 'POST',
     }),
   notifications: () => request<NotificationItem[]>('/notifications'),
-  jarvisChat: (message: string, sessionId?: string) =>
+  jarvisChat: (
+    message: string,
+    sessionId?: string,
+    source?: 'voice' | 'text',
+    codingProjectId?: string,
+    clientAck?: boolean,
+    signal?: AbortSignal,
+  ) =>
     request<JarvisChatResponse>('/jarvis/chat', {
       method: 'POST',
-      body: JSON.stringify({ message, sessionId }),
+      body: JSON.stringify({ message, sessionId, source, codingProjectId, clientAck }),
+      signal,
     }),
+  jarvisSessions: () =>
+    request<{ sessions: JarvisSessionSummary[] }>('/jarvis/sessions'),
+  jarvisCreateSession: () =>
+    request<{ session: JarvisSessionSummary }>('/jarvis/sessions', {
+      method: 'POST',
+      body: '{}',
+    }),
+  jarvisGetSession: (sessionId: string) =>
+    request<{ session: JarvisSessionSummary; messages: JarvisMessage[] }>(
+      `/jarvis/sessions/${encodeURIComponent(sessionId)}`,
+    ),
   jarvisWarmupStt: () =>
     request<{ status: string }>('/jarvis/warmup-stt', { method: 'POST' }),
+  jarvisSpeak: (text: string) =>
+    request<JarvisSpeakResponse>('/jarvis/speak', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+  ingestStatus: () =>
+    request<IngestStatusResponse>('/ingest/status'),
+  ingestRecent: (limit = 30, sinceHours = 48) =>
+    request<IngestRecentResponse>(
+      `/ingest/recent?limit=${limit}&sinceHours=${sinceHours}`,
+    ),
+  ingestCollectAll: () =>
+    request<IngestCollectResponse>('/ingest/collect-all', { method: 'POST', body: '{}' }),
+  ingestSearch: (query: string, tags?: string[], maxResults?: number) =>
+    request<IngestRecentResponse>('/ingest/search', {
+      method: 'POST',
+      body: JSON.stringify({ query, tags, maxResults }),
+    }),
+  ingestFeedsPoll: (sectors?: string[]) =>
+    request<{ count: number; sectors: string[] }>('/ingest/feeds/poll', {
+      method: 'POST',
+      body: JSON.stringify({ sectors }),
+    }),
+  ingestPricesRefresh: (symbols: string[]) =>
+    request<IngestRecentResponse>('/ingest/prices/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ symbols }),
+    }),
+  jarvisTranscribe: async (audio: Blob, signal?: AbortSignal): Promise<string> => {
+    const form = new FormData();
+    form.append('audio', audio, 'speech.wav');
+    const res = await fetch(`${BASE}/jarvis/transcribe`, {
+      method: 'POST',
+      body: form,
+      signal,
+    });
+    const json = (await res.json()) as ApiResponse<{ text?: string; error?: string }>;
+    if (json.error) throw new Error(json.error.message);
+    const data = json.data;
+    if (data?.error) throw new Error(data.error);
+    return (data?.text ?? '').trim();
+  },
 };
 
 export interface Health {
@@ -218,15 +332,6 @@ export interface ProviderStatus {
   configured: boolean;
 }
 
-export interface SettingSpec {
-  key: string;
-  type: string;
-  label: string;
-  description?: string;
-  default?: unknown;
-  secret?: boolean;
-}
-
 export interface ModuleSettingsResponse {
   moduleId: string;
   settings: SettingSpec[];
@@ -267,9 +372,75 @@ export interface NewModel {
 export interface JarvisChatResponse {
   reply: string;
   state: 'completed' | 'needs_approval' | 'error';
+  sessionId?: string;
   routedTo?: { kind: 'agent' | 'module'; id: string };
   openApp?: string;
+  codingProjectId?: string;
   action?: { moduleId: string; action: string; input?: unknown };
   dataAsOf?: string;
-  sources?: Array<{ url?: string; title: string; fetchedAt: string }>;
+  sources?: Array<{ url?: string; title: string; fetchedAt: string; source?: string }>;
+}
+
+export type JarvisSpeakResponse =
+  | {
+      available: true;
+      audioBase64: string;
+      mimeType: string;
+      provider: 'openai' | 'elevenlabs';
+      voice: string;
+    }
+  | {
+      available: false;
+      reason: string;
+    };
+
+export interface JarvisSessionSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  preview?: string;
+}
+
+export interface JarvisMessage {
+  id: string;
+  role: 'user' | 'jarvis';
+  content: string;
+  createdAt: string;
+}
+
+export interface IngestConnectorStatus {
+  id: string;
+  name: string;
+  enabled: boolean;
+  requiresKey: boolean;
+  configured: boolean;
+  description: string;
+}
+
+export interface IngestStatusResponse {
+  connectors: IngestConnectorStatus[];
+  lastCollectionAt: string | null;
+}
+
+export interface IngestDocumentSummary {
+  id: string;
+  source: string;
+  title: string;
+  url?: string;
+  snippet: string;
+  tags: string[];
+  fetchedAt: string;
+}
+
+export interface IngestRecentResponse {
+  count: number;
+  documents: IngestDocumentSummary[];
+}
+
+export interface IngestCollectResponse {
+  total: number;
+  bySource: Record<string, number>;
+  collectedAt: string;
 }

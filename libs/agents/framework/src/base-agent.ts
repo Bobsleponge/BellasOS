@@ -10,6 +10,7 @@ import {
   type MemoryGateway,
 } from '@bellasos/contracts';
 import { RunStore } from './run-store';
+import type { ModuleGateway } from './module-gateway';
 
 export interface AgentDeps {
   ai: AIGateway;
@@ -17,6 +18,8 @@ export interface AgentDeps {
   events: EventBus;
   logger: Logger;
   runStore: RunStore;
+  /** When set, agents can run module actions for persisted / executable outcomes. */
+  modules?: ModuleGateway;
 }
 
 /**

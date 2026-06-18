@@ -1,38 +1,35 @@
 'use client';
 
-import { AnimatePresence } from 'framer-motion';
-import { useShellStore } from '@/stores/shellStore';
-import { AppWindow } from './AppWindow';
 import { Desktop } from './Desktop';
 import { GestureLayer } from './GestureLayer';
+import { JarvisProcessingBanner } from './JarvisProcessingBanner';
 import { JarvisPresence } from './JarvisPresence';
+import { DataIntelPanel } from './DataIntelPanel';
 import { Taskbar } from './Taskbar';
 import { VoiceEQVisualizer } from './VoiceEQVisualizer';
 import { VoiceSessionProvider } from './VoiceSessionProvider';
 
 export function BellasShell() {
-  const windows = useShellStore((s) => s.windows);
-
   return (
     <VoiceSessionProvider>
-      <div className="shell-bg min-h-screen w-full overflow-hidden font-sans text-white relative">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(56,189,248,0.08)_0%,_transparent_55%)] pointer-events-none" />
+      <div className="shell-bg min-h-screen w-full overflow-hidden font-sans text-white relative flex flex-col">
+        <JarvisProcessingBanner />
         <Desktop />
 
-        <div className="relative z-10 flex flex-col items-center justify-center min-h-screen pb-20 pt-16 px-4 gap-8 pointer-events-none">
-          <div className="pointer-events-auto w-full">
-            <VoiceEQVisualizer />
-          </div>
-          <div className="pointer-events-auto w-full">
-            <JarvisPresence />
-          </div>
+        {/* Particle orb — upper zone, text-free */}
+        <div className="relative z-0 flex-shrink-0 flex items-center justify-center pt-20 pb-2 pointer-events-none">
+          <VoiceEQVisualizer />
         </div>
 
-        <AnimatePresence>
-          {windows.map((w) => (
-            <AppWindow key={w.id} win={w} />
-          ))}
-        </AnimatePresence>
+        {/* All controls & text below the orb */}
+        <div className="relative z-10 flex-1 flex flex-col items-center px-4 pb-24 pt-4 gap-5 pointer-events-none min-h-0">
+          <div className="pointer-events-auto w-full max-w-2xl">
+            <JarvisPresence />
+          </div>
+          <div className="pointer-events-auto w-full max-w-2xl">
+            <DataIntelPanel />
+          </div>
+        </div>
 
         <Taskbar />
         <GestureLayer />

@@ -31,7 +31,10 @@
     "@bellasos/module-social": "*",
     "@bellasos/module-automation": "*",
     "@bellasos/module-voice": "*",
-    "@bellasos/module-camera": "*"
+    "@bellasos/module-camera": "*",
+    "@bellasos/module-coding": "*",
+    "@bellasos/module-finance": "*",
+    "@bellasos/module-finance-tracker": "*"
   },
   "nx": {
     "tags": ["scope:app"]

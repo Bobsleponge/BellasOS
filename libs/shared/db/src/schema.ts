@@ -214,6 +214,22 @@ export interface CoreIngestDocumentsTable {
   expires_at: string | null;
 }
 
+export interface JarvisSessionsTable {
+  id: Generated<string>;
+  user_id: string;
+  title: string;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface JarvisMessagesTable {
+  id: Generated<string>;
+  session_id: string;
+  role: string;
+  content: string;
+  created_at: Generated<string>;
+}
+
 export interface Database {
   'core.users': CoreUsersTable;
   'core.roles': CoreRolesTable;
@@ -236,5 +252,7 @@ export interface Database {
   'agents.runs': AgentsRunsTable;
   'memory.items': MemoryItemsTable;
   'memory.summaries': MemorySummariesTable;
+  'jarvis.sessions': JarvisSessionsTable;
+  'jarvis.messages': JarvisMessagesTable;
   'core.module_kv': ModuleKvTable;
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { api } from '@/lib/api';
 import { useShellStore } from '@/stores/shellStore';
+import { consoleAppUrl } from '@/lib/navigation';
 
 /** Webcam hand-gesture layer (MediaPipe). Opt-in via taskbar. */
 export function GestureLayer() {
@@ -10,6 +11,7 @@ export function GestureLayer() {
   const voiceSessionActive = useShellStore((s) => s.voiceSessionActive);
   const setVoiceSessionActive = useShellStore((s) => s.setVoiceSessionActive);
   const setEqState = useShellStore((s) => s.setEqState);
+  const setSpeechError = useShellStore((s) => s.setSpeechError);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastGesture = useRef<string>('');
 
@@ -65,15 +67,22 @@ export function GestureLayer() {
                 setVoiceSessionActive(true);
               }
               setEqState('listening');
-              await api.invoke('bellasos.camera', 'ingest', {
-                kind: 'gesture',
-                detail: gesture,
-              });
+              try {
+                await api.invoke('bellasos.camera', 'ingest', {
+                  kind: 'gesture',
+                  detail: gesture,
+                });
+                setSpeechError(null);
+              } catch (err) {
+                setSpeechError(
+                  `Gesture camera event failed: ${(err as Error).message}. Check Camera settings.`,
+                );
+              }
             }
           }
         }, 200);
-      } catch {
-        /* camera or model unavailable */
+      } catch (err) {
+        setSpeechError(`Gesture layer unavailable: ${(err as Error).message}`);
       }
     };
 
@@ -83,16 +92,24 @@ export function GestureLayer() {
       if (timer) clearInterval(timer);
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [enabled, setEqState, voiceSessionActive, setVoiceSessionActive]);
+  }, [enabled, setEqState, setSpeechError, voiceSessionActive, setVoiceSessionActive]);
 
   if (!enabled) return null;
 
   return (
-    <video
-      ref={videoRef}
-      className="fixed bottom-16 right-4 w-32 h-24 rounded-lg border border-accent/30 opacity-40 pointer-events-none z-40 object-cover"
-      muted
-      playsInline
-    />
+    <>
+      <video
+        ref={videoRef}
+        className="fixed bottom-16 right-4 w-32 h-24 rounded-lg border border-accent/30 opacity-40 pointer-events-none z-40 object-cover"
+        muted
+        playsInline
+      />
+      <a
+        href={consoleAppUrl('bellasos.camera')}
+        className="fixed bottom-16 right-36 text-[10px] text-accent/70 hover:text-accent z-40 pointer-events-auto"
+      >
+        Camera →
+      </a>
+    </>
   );
 }

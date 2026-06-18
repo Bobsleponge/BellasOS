@@ -1,0 +1,59 @@
+/** Central TanStack Query keys for targeted cache invalidation. */
+export const queryKeys = {
+  health: ['health'] as const,
+  modules: ['modules'] as const,
+  widgets: ['widgets'] as const,
+  agents: ['agents'] as const,
+  runs: ['runs'] as const,
+  models: ['models'] as const,
+  providers: ['providers'] as const,
+  routing: ['routing'] as const,
+  audit: ['audit'] as const,
+  approvals: ['approvals'] as const,
+  notifications: ['notifications'] as const,
+  integrations: ['integrations'] as const,
+  settings: (moduleId: string) => ['settings', moduleId] as const,
+  holdings: ['holdings'] as const,
+  accounts: ['accounts'] as const,
+  watchlist: ['watchlist'] as const,
+  portfolioSummary: ['portfolio-summary'] as const,
+  portfolioSync: ['portfolio-sync'] as const,
+  financeInvestments: ['finance-investments'] as const,
+  financeTrackerConnection: ['finance-tracker-connection'] as const,
+  reports: ['reports'] as const,
+  sectors: ['sectors'] as const,
+  alerts: ['alerts'] as const,
+  briefings: ['briefings'] as const,
+  automationStatus: ['automation-status'] as const,
+  automationDevices: ['automation-devices'] as const,
+  cameraEvents: ['camera-events'] as const,
+  socialDrafts: ['social-drafts'] as const,
+  socialPlatforms: ['social-platforms'] as const,
+  socialAnalytics: ['social-analytics'] as const,
+  aiUsage: ['ai-usage'] as const,
+  ingestStatus: ['ingest', 'status'] as const,
+  ingestRecent: ['ingest', 'recent'] as const,
+  widget: (moduleId: string, action: string) => ['widget', moduleId, action] as const,
+  jarvisSessions: ['jarvis', 'sessions'] as const,
+  codingProjects: ['coding-projects'] as const,
+};
+
+export const portfolioKeys = [
+  queryKeys.holdings,
+  queryKeys.accounts,
+  queryKeys.watchlist,
+  queryKeys.portfolioSummary,
+  queryKeys.portfolioSync,
+  queryKeys.financeTrackerConnection,
+];
+
+export const financeKeys = [
+  queryKeys.financeInvestments,
+  queryKeys.financeAnalysis,
+];
+
+export const socialKeys = [
+  queryKeys.socialDrafts,
+  queryKeys.socialPlatforms,
+  queryKeys.socialAnalytics,
+];

@@ -34,8 +34,8 @@ async function bootstrap(): Promise<void> {
         { ...SYSTEM_CTX, traceId: crypto.randomUUID() },
       ) as string[];
       const ingestion = getIngestionService();
-      const docs = await ingestion.pollSectorNews(sectors.slice(0, 12));
-      log.info('feed poll complete', { docs: docs.length, sectors: sectors.length });
+      const result = await ingestion.runWorldCollection({ sectors: sectors.slice(0, 12) });
+      log.info('world collection complete', result);
 
       const alerts = (await platform.registry.dispatch(
         'bellasos.intelligence',
@@ -76,6 +76,28 @@ async function bootstrap(): Promise<void> {
     }
   };
 
+  const syncPortfolioExternal = async () => {
+    try {
+      const status = (await platform.registry.dispatch(
+        'bellasos.portfolio',
+        'sync.status',
+        {},
+        { ...SYSTEM_CTX, traceId: crypto.randomUUID() },
+      )) as { connected?: boolean };
+      if (!status.connected) return;
+
+      await platform.registry.dispatch(
+        'bellasos.portfolio',
+        'sync.pull',
+        {},
+        { ...SYSTEM_CTX, traceId: crypto.randomUUID() },
+      );
+      log.info('portfolio external sync completed');
+    } catch (err) {
+      log.warn('portfolio external sync failed', { error: (err as Error).message });
+    }
+  };
+
   const runDailyBriefing = async () => {
     try {
       await platform.registry.dispatch(
@@ -109,6 +131,9 @@ async function bootstrap(): Promise<void> {
 
   setTimeout(refreshPortfolioPrices, 20_000);
   setInterval(refreshPortfolioPrices, 60 * 60 * 1000);
+
+  setTimeout(syncPortfolioExternal, 45_000);
+  setInterval(syncPortfolioExternal, 15 * 60 * 1000);
 
   setTimeout(runDailyBriefing, 30_000);
   setInterval(runDailyBriefing, 24 * 60 * 60 * 1000);

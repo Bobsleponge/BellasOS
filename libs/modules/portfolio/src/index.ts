@@ -8,8 +8,17 @@ import {
   type ModuleRuntime,
 } from '@bellasos/contracts';
 import { getIngestionService } from '@bellasos/core-ingestion';
-
-const ACCOUNTS = ['Trust', 'Personal', 'TFSA', 'Crypto', 'Property'] as const;
+import {
+  ACCOUNTS,
+  buildSyncPayload,
+  fetchExternalSync,
+  mergeHoldings,
+  portfolioSyncPayloadSchema,
+  pushExternalSync,
+  type StoredHolding,
+  type SyncMeta,
+  toStoredHolding,
+} from './sync';
 
 const holdingInput = z.object({
   account: z.enum(ACCOUNTS),
@@ -24,6 +33,15 @@ const holdingIdInput = z.object({ id: z.string().min(1) });
 const watchlistInput = z.object({
   symbol: z.string().min(1),
   note: z.string().optional(),
+});
+
+const holdingsImportInput = z.object({
+  holdings: z.array(
+    holdingInput.extend({ updatedAt: z.string().optional() }),
+  ),
+  watchlist: z.array(watchlistInput).optional(),
+  replace: z.boolean().optional(),
+  source: z.enum(['webhook', 'pull', 'manual']).optional(),
 });
 
 interface Holding extends z.infer<typeof holdingInput> {
@@ -65,6 +83,12 @@ const manifest: ModuleManifest = {
       permission: 'portfolio.manage',
       inputSchema: holdingIdInput,
     },
+    {
+      name: 'holdings.import',
+      description: 'Bulk import holdings from an external app',
+      permission: 'portfolio.manage',
+      inputSchema: holdingsImportInput,
+    },
     { name: 'watchlist.list', description: 'List watchlist symbols', permission: 'portfolio.read' },
     {
       name: 'watchlist.add',
@@ -89,6 +113,26 @@ const manifest: ModuleManifest = {
       description: 'Refresh market prices for held symbols',
       permission: 'portfolio.manage',
     },
+    {
+      name: 'sync.export',
+      description: 'Export holdings for external sync',
+      permission: 'portfolio.read',
+    },
+    {
+      name: 'sync.pull',
+      description: 'Pull holdings from connected external app',
+      permission: 'portfolio.manage',
+    },
+    {
+      name: 'sync.push',
+      description: 'Push holdings to connected external app',
+      permission: 'portfolio.manage',
+    },
+    {
+      name: 'sync.status',
+      description: 'External sync connection status',
+      permission: 'portfolio.read',
+    },
   ],
   events: [
     {
@@ -104,6 +148,29 @@ const manifest: ModuleManifest = {
       type: 'string',
       label: 'Base currency',
       default: 'ZAR',
+    },
+    {
+      key: 'syncEnabled',
+      type: 'boolean',
+      label: 'Enable external sync',
+      default: false,
+    },
+    {
+      key: 'externalSyncUrl',
+      type: 'string',
+      label: 'External app sync URL',
+      description: 'Your app endpoint — must accept GET and POST portfolio sync payloads',
+    },
+    {
+      key: 'syncAppName',
+      type: 'string',
+      label: 'Connected app name',
+    },
+    {
+      key: 'syncApiKey',
+      type: 'secret',
+      label: 'Shared sync API key',
+      secret: true,
     },
   ],
   widgets: [
@@ -126,8 +193,90 @@ export function createPortfolioModule(): ModuleRuntime {
     return items.map((i) => i.value as Holding);
   };
 
+  const loadWatchlist = async (): Promise<WatchItem[]> => {
+    const items = await ctx.storage.list('watch:');
+    return items.map((i) => i.value as WatchItem);
+  };
+
+  const loadSyncMeta = async (): Promise<SyncMeta> => {
+    const row = await ctx.storage.get('sync:meta');
+    return (row as SyncMeta | undefined) ?? {};
+  };
+
+  const saveSyncMeta = async (patch: Partial<SyncMeta>) => {
+    const current = await loadSyncMeta();
+    await ctx.storage.set('sync:meta', { ...current, ...patch });
+  };
+
   const currency = async () =>
     (await ctx.config.get<string>('baseCurrency')) ?? 'ZAR';
+
+  const syncConfig = async () => {
+    const syncEnabled = (await ctx.config.get<boolean>('syncEnabled')) ?? false;
+    const externalSyncUrl = (await ctx.config.get<string>('externalSyncUrl')) ?? '';
+    const syncAppName = (await ctx.config.get<string>('syncAppName')) ?? '';
+    const syncApiKey = (await ctx.config.getSecret('syncApiKey')) ?? '';
+    return { syncEnabled, externalSyncUrl, syncAppName, syncApiKey };
+  };
+
+  const maybePushSync = async (traceId: string, actorId: string) => {
+    const { syncEnabled, externalSyncUrl, syncApiKey } = await syncConfig();
+    if (!syncEnabled || !externalSyncUrl || !syncApiKey) return;
+    try {
+      const holdings = await loadHoldings();
+      const watchlist = await loadWatchlist();
+      const payload = buildSyncPayload(holdings, watchlist);
+      await pushExternalSync(externalSyncUrl, syncApiKey, payload);
+      await saveSyncMeta({ lastPushAt: new Date().toISOString(), lastError: undefined });
+    } catch (err) {
+      await saveSyncMeta({ lastError: (err as Error).message });
+    }
+  };
+
+  const applyImport = async (
+    input: z.infer<typeof holdingsImportInput>,
+    call: CallContext,
+  ) => {
+    const local = await loadHoldings();
+    const merged = mergeHoldings(local, input.holdings);
+    const mergedIds = new Set(merged.map((h) => h.id));
+
+    if (input.replace) {
+      for (const h of local) {
+        if (!mergedIds.has(h.id)) {
+          await ctx.storage.delete(`holding:${h.id}`);
+        }
+      }
+    }
+
+    for (const h of merged) {
+      await ctx.storage.set(`holding:${h.id}`, h);
+    }
+
+    if (input.watchlist) {
+      for (const w of input.watchlist) {
+        const item: WatchItem = {
+          id: w.symbol.toUpperCase(),
+          symbol: w.symbol.toUpperCase(),
+          note: w.note,
+          addedAt: new Date().toISOString(),
+        };
+        await ctx.storage.set(`watch:${item.id}`, item);
+      }
+    }
+
+    await ctx.events.publish(
+      CoreEvents.PortfolioUpdated,
+      { bulk: true, count: merged.length, source: input.source ?? 'manual' },
+      { traceId: call.traceId, actorId: call.principal.id },
+    );
+
+    if (input.source === 'webhook') {
+      await saveSyncMeta({ lastWebhookAt: new Date().toISOString(), lastError: undefined });
+    }
+
+    return { imported: merged.length, holdings: merged.length };
+  };
 
   return {
     manifest,
@@ -149,7 +298,8 @@ export function createPortfolioModule(): ModuleRuntime {
           const data = holdingInput.parse(input);
           const holding: Holding = {
             ...data,
-            id: `${data.account}:${data.symbol}`,
+            id: `${data.account}:${data.symbol.toUpperCase()}`,
+            symbol: data.symbol.toUpperCase(),
             updatedAt: new Date().toISOString(),
           };
           await ctx.storage.set(`holding:${holding.id}`, holding);
@@ -157,6 +307,7 @@ export function createPortfolioModule(): ModuleRuntime {
             traceId: call.traceId,
             actorId: call.principal.id,
           });
+          void maybePushSync(call.traceId, call.principal.id);
           return holding;
         }
         case 'holdings.delete': {
@@ -166,11 +317,18 @@ export function createPortfolioModule(): ModuleRuntime {
             traceId: call.traceId,
             actorId: call.principal.id,
           });
+          void maybePushSync(call.traceId, call.principal.id);
           return { deleted: true, id };
         }
+        case 'holdings.import': {
+          const data = holdingsImportInput.parse(input);
+          const result = await applyImport(data, call);
+          void maybePushSync(call.traceId, call.principal.id);
+          return result;
+        }
         case 'watchlist.list': {
-          const items = await ctx.storage.list('watch:');
-          return items.map((i) => i.value as WatchItem);
+          const items = await loadWatchlist();
+          return items.map((i) => i.symbol);
         }
         case 'watchlist.add': {
           const { symbol, note } = watchlistInput.parse(input);
@@ -181,12 +339,63 @@ export function createPortfolioModule(): ModuleRuntime {
             addedAt: new Date().toISOString(),
           };
           await ctx.storage.set(`watch:${item.id}`, item);
+          void maybePushSync(call.traceId, call.principal.id);
           return item;
         }
         case 'watchlist.remove': {
           const { symbol } = watchlistInput.pick({ symbol: true }).parse(input);
           await ctx.storage.delete(`watch:${symbol.toUpperCase()}`);
+          void maybePushSync(call.traceId, call.principal.id);
           return { removed: symbol.toUpperCase() };
+        }
+        case 'sync.export': {
+          const holdings = await loadHoldings();
+          const watchlist = await loadWatchlist();
+          return buildSyncPayload(holdings, watchlist);
+        }
+        case 'sync.status': {
+          const cfg = await syncConfig();
+          const meta = await loadSyncMeta();
+          const hasKey = Boolean(cfg.syncApiKey);
+          return {
+            connected: cfg.syncEnabled && Boolean(cfg.externalSyncUrl) && hasKey,
+            syncEnabled: cfg.syncEnabled,
+            externalSyncUrl: cfg.externalSyncUrl || null,
+            syncAppName: cfg.syncAppName || null,
+            hasApiKey: hasKey,
+            ...meta,
+            bellasosWebhookUrl: '/api/v1/integrations/portfolio/webhook',
+            bellasosExportUrl: '/api/v1/integrations/portfolio/export',
+          };
+        }
+        case 'sync.pull': {
+          const { syncEnabled, externalSyncUrl, syncApiKey } = await syncConfig();
+          if (!syncEnabled || !externalSyncUrl || !syncApiKey) {
+            throw new Error('Portfolio sync is not configured. Connect your app first.');
+          }
+          const remote = await fetchExternalSync(externalSyncUrl, syncApiKey);
+          const result = await applyImport(
+            { holdings: remote.holdings, watchlist: remote.watchlist, source: 'pull' },
+            call,
+          );
+          const merged = buildSyncPayload(await loadHoldings(), await loadWatchlist());
+          await pushExternalSync(externalSyncUrl, syncApiKey, merged);
+          await saveSyncMeta({
+            lastPullAt: new Date().toISOString(),
+            lastPushAt: new Date().toISOString(),
+            lastError: undefined,
+          });
+          return { ...result, syncedAt: merged.syncedAt };
+        }
+        case 'sync.push': {
+          const { syncEnabled, externalSyncUrl, syncApiKey } = await syncConfig();
+          if (!syncEnabled || !externalSyncUrl || !syncApiKey) {
+            throw new Error('Portfolio sync is not configured. Connect your app first.');
+          }
+          const payload = buildSyncPayload(await loadHoldings(), await loadWatchlist());
+          await pushExternalSync(externalSyncUrl, syncApiKey, payload);
+          await saveSyncMeta({ lastPushAt: new Date().toISOString(), lastError: undefined });
+          return { pushed: true, syncedAt: payload.syncedAt, holdings: payload.holdings.length };
         }
         case 'summary': {
           const holdings = await loadHoldings();
@@ -273,3 +482,11 @@ export function createPortfolioModule(): ModuleRuntime {
     },
   };
 }
+
+export {
+  portfolioSyncPayloadSchema,
+  buildSyncPayload,
+  type PortfolioSyncPayload,
+  type StoredHolding,
+  toStoredHolding,
+};

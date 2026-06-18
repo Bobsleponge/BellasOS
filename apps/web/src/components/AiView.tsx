@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type NewModel } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { Panel } from './Panel';
 
 const PROVIDERS = [
@@ -25,31 +26,67 @@ const ENV_KEY: Record<string, string> = {
 
 export function AiView() {
   const qc = useQueryClient();
-  const { data: models } = useQuery({ queryKey: ['models'], queryFn: api.models });
+  const { data: models } = useQuery({ queryKey: queryKeys.models, queryFn: api.models });
   const { data: providers } = useQuery({
-    queryKey: ['providers'],
+    queryKey: queryKeys.providers,
     queryFn: api.providers,
+  });
+  const { data: usage } = useQuery({
+    queryKey: queryKeys.aiUsage,
+    queryFn: () =>
+      api.invoke<{
+        totalCostUsd: number;
+        totalTokens: number;
+        byModel: Array<{ model: string; requests: number; total_tokens: number; cost_usd: number }>;
+      }>('bellasos.llm', 'usage.summary', {}),
   });
 
   const toggle = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
       enabled ? api.disableModel(id) : api.enableModel(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['models'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.models }),
   });
 
   const discover = useMutation({
     mutationFn: () => api.discoverModels(),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['models'] });
-      qc.invalidateQueries({ queryKey: ['providers'] });
+      qc.invalidateQueries({ queryKey: queryKeys.models });
+      qc.invalidateQueries({ queryKey: queryKeys.providers });
     },
   });
 
+  const enabledCount = (models ?? []).filter((m) => m.enabled).length;
+
   return (
     <div className="space-y-4">
-      {/* Provider status */}
+      {usage && (
+        <Panel title="Usage summary" subtitle="spend & tokens">
+          <div className="flex gap-6 mb-2">
+            <div>
+              <p className="text-xs text-muted">Total spend</p>
+              <p className="text-lg text-white">${usage.totalCostUsd.toFixed(4)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted">Total tokens</p>
+              <p className="text-lg text-white">{usage.totalTokens.toLocaleString()}</p>
+            </div>
+          </div>
+          <ul className="text-xs space-y-1 max-h-32 overflow-auto">
+            {(usage.byModel ?? []).map((row) => (
+              <li key={row.model} className="flex justify-between text-muted">
+                <span>{row.model}</span>
+                <span>${Number(row.cost_usd).toFixed(4)} · {row.requests} req</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
       <Panel title="Providers" subtitle="credentials">
-        <div className="flex justify-end mb-2">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-xs text-muted">
+            {enabledCount}/{(models ?? []).length} models enabled
+          </span>
           <button
             onClick={() => discover.mutate()}
             disabled={discover.isPending}
@@ -58,6 +95,11 @@ export function AiView() {
             {discover.isPending ? 'Scanning...' : 'Scan local (Ollama) models'}
           </button>
         </div>
+        {discover.data && (
+          <p className="text-xs text-green-400 mb-2">
+            Discovery complete — {discover.data.length} model(s) in registry.
+          </p>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           {(providers ?? []).map((p) => (
             <div
@@ -85,7 +127,6 @@ export function AiView() {
         <TestCompletionPanel />
       </Panel>
 
-      {/* Models table */}
       <Panel title="Models" subtitle="registry">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -155,19 +196,46 @@ export function AiView() {
 function ProviderCredentials() {
   const qc = useQueryClient();
   const [keys, setKeys] = useState<Record<string, string>>({});
+  const [testResults, setTestResults] = useState<
+    Record<string, { ok: boolean; error?: string; model?: string }>
+  >({});
+
   const save = useMutation({
     mutationFn: ({ provider, value }: { provider: string; value: string }) =>
       api.setProviderCredential(provider, value),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['providers'] });
-      qc.invalidateQueries({ queryKey: ['models'] });
+      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.models });
+    },
+  });
+  const clear = useMutation({
+    mutationFn: (provider: string) => api.clearProviderCredential(provider),
+    onSuccess: (_, provider) => {
+      qc.invalidateQueries({ queryKey: queryKeys.providers });
+      qc.invalidateQueries({ queryKey: queryKeys.models });
+      setTestResults((r) => {
+        const next = { ...r };
+        delete next[provider];
+        return next;
+      });
     },
   });
   const test = useMutation({
     mutationFn: (provider: string) => api.testProvider(provider),
+    onSuccess: (data, provider) => {
+      setTestResults((r) => ({ ...r, [provider]: data }));
+    },
+    onError: (err, provider) => {
+      setTestResults((r) => ({
+        ...r,
+        [provider]: { ok: false, error: (err as Error).message },
+      }));
+    },
   });
+
   const field =
     'flex-1 bg-panel2 border border-edge rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent';
+
   return (
     <div className="mt-4 space-y-2">
       <p className="text-xs text-accent uppercase tracking-wide">Connect providers</p>
@@ -189,13 +257,23 @@ function ProviderCredentials() {
           </button>
           <button
             onClick={() => test.mutate(p)}
+            disabled={test.isPending}
             className="text-xs px-2 py-1 rounded border border-edge text-muted"
           >
             Test
           </button>
-          {test.data && test.variables === p && (
-            <span className={`text-xs ${test.data.ok ? 'text-green-400' : 'text-red-400'}`}>
-              {test.data.ok ? 'OK' : test.data.error}
+          <button
+            onClick={() => clear.mutate(p)}
+            disabled={clear.isPending}
+            className="text-xs px-2 py-1 rounded border border-edge text-muted hover:text-red-400"
+          >
+            Clear
+          </button>
+          {testResults[p] && (
+            <span className={`text-xs ${testResults[p]!.ok ? 'text-green-400' : 'text-red-400'}`}>
+              {testResults[p]!.ok
+                ? `OK${testResults[p]!.model ? ` (${testResults[p]!.model})` : ''}`
+                : testResults[p]!.error}
             </span>
           )}
         </div>
@@ -206,10 +284,10 @@ function ProviderCredentials() {
 
 function RoutingStrategyPanel() {
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ['routing'], queryFn: api.getRoutingStrategy });
+  const { data } = useQuery({ queryKey: queryKeys.routing, queryFn: api.getRoutingStrategy });
   const set = useMutation({
     mutationFn: (strategy: string) => api.setRoutingStrategy(strategy),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['routing'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.routing }),
   });
   const strategies = ['quality', 'cost', 'latency', 'privacy'];
   return (
@@ -285,7 +363,7 @@ function AddModelForm() {
           .filter(Boolean),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['models'] });
+      qc.invalidateQueries({ queryKey: queryKeys.models });
       setMsg(`Added ${form.id}.`);
       setForm({ ...form, id: '', displayName: '' });
     },

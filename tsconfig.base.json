@@ -46,7 +46,11 @@
       "@bellasos/module-social": ["libs/modules/social/src/index.ts"],
       "@bellasos/module-automation": ["libs/modules/automation/src/index.ts"],
       "@bellasos/module-voice": ["libs/modules/voice/src/index.ts"],
-      "@bellasos/module-camera": ["libs/modules/camera/src/index.ts"]
+      "@bellasos/module-camera": ["libs/modules/camera/src/index.ts"],
+      "@bellasos/module-coding": ["libs/modules/coding/src/index.ts"],
+      "@bellasos/module-finance": ["libs/modules/finance/src/index.ts"],
+      "@bellasos/module-finance-tracker": ["libs/modules/finance-tracker/src/index.ts"],
+      "@bellasos/core-external-apps": ["libs/core/external-apps/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "dist", "tmp", ".next"]

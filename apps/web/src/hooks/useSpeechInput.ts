@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type SpeechErrorEvent = Event & { error?: string };
 
@@ -55,12 +55,17 @@ export function useSpeechInput(
 ) {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [supported, setSupported] = useState(false);
   const recRef = useRef<InstanceType<SpeechCtor> | null>(null);
   const onFinalRef = useRef(onFinal);
   const sessionActiveRef = useRef(options?.sessionActive ?? false);
   const restartTimerRef = useRef<number | null>(null);
   onFinalRef.current = onFinal;
   sessionActiveRef.current = options?.sessionActive ?? false;
+
+  useEffect(() => {
+    setSupported(Boolean(getSpeechRecognition()));
+  }, []);
 
   const stop = useCallback(() => {
     if (restartTimerRef.current) {
@@ -135,8 +140,6 @@ export function useSpeechInput(
     }
   }, [stop]);
 
-  const supported = typeof window !== 'undefined' && Boolean(getSpeechRecognition());
-
   return {
     listening,
     start,
@@ -147,14 +150,4 @@ export function useSpeechInput(
   };
 }
 
-export function speakText(text: string, onEnd?: () => void) {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    onEnd?.();
-    return;
-  }
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.onend = () => onEnd?.();
-  u.onerror = () => onEnd?.();
-  window.speechSynthesis.speak(u);
-}
+export { speakText, stopSpeaking, preloadJarvisVoice } from '@/lib/speechOutput';

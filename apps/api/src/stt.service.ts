@@ -1,4 +1,8 @@
 import { createLogger } from '@bellasos/observability';
+import {
+  isImpulsiveNonSpeech,
+  shouldRejectVoiceTranscript,
+} from './transcript-guard';
 
 const log = createLogger({ lib: 'stt' });
 
@@ -21,7 +25,7 @@ async function getTranscriber(): Promise<WhisperPipeline> {
       if (process.env.TRANSFORMERS_CACHE) {
         env.cacheDir = process.env.TRANSFORMERS_CACHE;
       }
-      const modelId = process.env.STT_MODEL ?? 'Xenova/whisper-base.en';
+      const modelId = process.env.STT_MODEL ?? 'Xenova/whisper-medium.en';
       return createPipeline(
         'automatic-speech-recognition',
         modelId,
@@ -103,12 +107,14 @@ function resample(input: Float32Array, fromRate: number, toRate: number): Float3
 }
 
 function normalizeAudio(samples: Float32Array): Float32Array {
-  let peak = 0;
+  let sumSq = 0;
   for (let i = 0; i < samples.length; i++) {
-    peak = Math.max(peak, Math.abs(samples[i] ?? 0));
+    sumSq += (samples[i] ?? 0) ** 2;
   }
-  if (peak < 0.001) return samples;
-  const gain = 0.95 / peak;
+  const rms = Math.sqrt(sumSq / Math.max(1, samples.length));
+  if (rms < 0.001) return samples;
+  const targetRms = 0.1;
+  const gain = Math.min(6, targetRms / rms);
   const out = new Float32Array(samples.length);
   for (let i = 0; i < samples.length; i++) {
     out[i] = Math.max(-1, Math.min(1, (samples[i] ?? 0) * gain));
@@ -131,12 +137,17 @@ export async function transcribeWav(buffer: Buffer): Promise<string> {
   let audio = resample(samples, sampleRate, 16_000);
   audio = normalizeAudio(audio);
   const durationS = audio.length / 16_000;
-  if (durationS < 0.15) {
+  if (durationS < 0.2 || isImpulsiveNonSpeech(audio, 16_000, durationS)) {
+    log.info('skipped non-speech audio', { durationS: Math.round(durationS * 10) / 10 });
     return '';
   }
 
   const transcriber = await getTranscriber();
-  const opts: Record<string, unknown> = { return_timestamps: false };
+  const opts: Record<string, unknown> = {
+    return_timestamps: false,
+    language: 'english',
+    task: 'transcribe',
+  };
   if (durationS > 25) {
     opts.chunk_length_s = 30;
     opts.stride_length_s = 5;
@@ -144,6 +155,10 @@ export async function transcribeWav(buffer: Buffer): Promise<string> {
 
   const out = await transcriber(audio, opts);
   const text = extractText(out);
+  if (shouldRejectVoiceTranscript(text)) {
+    log.warn('rejected suspicious transcript', { preview: text.slice(0, 80) });
+    return '';
+  }
   log.info('transcribed', { durationS: Math.round(durationS * 10) / 10, chars: text.length });
   return text;
 }

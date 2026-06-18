@@ -19,18 +19,27 @@ const DEFAULT_SECTORS = [
 ];
 
 /**
- * Intelligence Agent: tracks sectors of interest and generates briefings,
- * weekly reports and trend analysis. Emits `agent.report_generated`.
+ * Intelligence Agent: sector briefings and trend analysis.
+ * Uses bellasos.intelligence module when available.
  */
 export class IntelligenceAgent extends BaseAgent {
   readonly type: AgentType = 'intelligence';
 
   protected async execute(task: AgentTask): Promise<AgentResult> {
     const ownerId = String(task.input.ownerId ?? task.actorId ?? 'system');
-    const sectors =
-      (task.input.sectors as string[] | undefined) ?? DEFAULT_SECTORS;
+    const sectors = (task.input.sectors as string[] | undefined) ?? DEFAULT_SECTORS;
     const cadence = String(task.input.cadence ?? 'daily');
     const focus = String(task.input.prompt ?? '').trim();
+
+    if (this.deps.modules) {
+      const result = await this.deps.modules.invoke(
+        'bellasos.intelligence',
+        'brief.generate',
+        { cadence },
+        task,
+      );
+      return { output: result as Record<string, unknown> };
+    }
 
     const completion = await this.deps.ai.complete({
       taskType: 'reasoning',
@@ -39,9 +48,7 @@ export class IntelligenceAgent extends BaseAgent {
         {
           role: 'system',
           content:
-            'You are an intelligence analyst. Produce a structured ' +
-            `${cadence} briefing covering the requested sectors. For each ` +
-            'sector give: Signal, Why it matters, and Watch items.',
+            'You are an intelligence analyst. Produce a structured briefing covering the requested sectors. For each sector give: Signal, Why it matters, and Watch items.',
         },
         {
           role: 'user',

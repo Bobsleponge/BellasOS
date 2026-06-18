@@ -9,13 +9,15 @@ import { NotificationService } from '@bellasos/core-notifications';
 import { ApprovalService, ModuleRegistry } from '@bellasos/core-registry';
 import { AIGatewayImpl } from '@bellasos/ai-gateway';
 import { MemorySystem } from '@bellasos/memory';
-import { RunStore, type AgentDeps } from '@bellasos/agents-framework';
+import { RunStore, type AgentDeps, type ModuleGateway } from '@bellasos/agents-framework';
+import { SYSTEM_PRINCIPAL } from '@bellasos/contracts';
 import { Orchestrator } from '@bellasos/agents-orchestrator';
 import {
   MemoryAgent,
   ResearchAgent,
   IntelligenceAgent,
   PortfolioAgent,
+  FinanceAgent,
   AutomationAgent,
   SocialAgent,
   CodingAgent,
@@ -30,6 +32,9 @@ import { createSocialModule } from '@bellasos/module-social';
 import { createAutomationModule } from '@bellasos/module-automation';
 import { createVoiceModule } from '@bellasos/module-voice';
 import { createCameraModule } from '@bellasos/module-camera';
+import { createCodingModule } from '@bellasos/module-coding';
+import { createFinanceModule } from '@bellasos/module-finance';
+import { createFinanceTrackerModule } from '@bellasos/module-finance-tracker';
 import { getIngestionService } from '@bellasos/core-ingestion';
 
 const log = createLogger({ lib: 'runtime' });
@@ -110,18 +115,36 @@ export class Platform {
       createAutomationModule,
       createVoiceModule,
       createCameraModule,
+      createCodingModule,
+      createFinanceModule,
+      createFinanceTrackerModule,
     ]) {
       await registry.register(create());
     }
     await registry.bootstrap();
 
     const runStore = new RunStore();
+    const modulesGateway: ModuleGateway = {
+      invoke: (moduleId, action, input, task) =>
+        registry.dispatch(moduleId, action, input, {
+          principal: task.actorId
+            ? {
+                id: task.actorId,
+                type: 'user',
+                roles: ['admin'],
+                permissions: ['*'],
+              }
+            : SYSTEM_PRINCIPAL,
+          traceId: task.traceId,
+        }),
+    };
     const agentDeps: AgentDeps = {
       ai,
       memory,
       events,
       logger: createLogger({ lib: 'agents' }),
       runStore,
+      modules: modulesGateway,
     };
     const orchestrator = new Orchestrator({
       events,
@@ -133,6 +156,7 @@ export class Platform {
       ResearchAgent,
       IntelligenceAgent,
       PortfolioAgent,
+      FinanceAgent,
       AutomationAgent,
       SocialAgent,
       CodingAgent,

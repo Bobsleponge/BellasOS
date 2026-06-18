@@ -3,12 +3,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type SettingSpec } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { Panel } from './Panel';
 
 export function SettingsForm({ moduleId }: { moduleId: string }) {
   const qc = useQueryClient();
   const { data } = useQuery({
-    queryKey: ['settings', moduleId],
+    queryKey: queryKeys.settings(moduleId),
     queryFn: () => api.getModuleSettings(moduleId),
   });
   const [values, setValues] = useState<Record<string, string>>({});
@@ -26,8 +27,8 @@ export function SettingsForm({ moduleId }: { moduleId: string }) {
         secrets: Object.fromEntries(Object.entries(secrets).filter(([, v]) => v)),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['settings', moduleId] });
-      qc.invalidateQueries({ queryKey: ['integrations'] });
+      qc.invalidateQueries({ queryKey: queryKeys.settings(moduleId) });
+      qc.invalidateQueries({ queryKey: queryKeys.integrations });
       setMsg('Settings saved.');
       setSecrets({});
     },

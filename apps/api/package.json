@@ -15,6 +15,7 @@
     "@bellasos/db": "*",
     "@bellasos/runtime": "*",
     "@bellasos/core-ingestion": "*",
+    "@bellasos/ai-routing": "*",
     "@nestjs/common": "^10.4.15",
     "@nestjs/core": "^10.4.15",
     "@nestjs/platform-express": "^10.4.15",

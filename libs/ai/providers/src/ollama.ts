@@ -102,7 +102,10 @@ export class OllamaProvider implements ProviderAdapter {
         model: model.id,
         messages: request.messages,
         stream: false,
-        options: { temperature: request.temperature ?? 0.7 },
+        options: {
+          temperature: request.temperature ?? 0.7,
+          num_predict: request.maxTokens ?? 256,
+        },
       }),
     });
     if (!res.ok) {

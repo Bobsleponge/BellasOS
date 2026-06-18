@@ -3,21 +3,26 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
+import { useAgentCommand } from '@/hooks/useAgentCommand';
 import { Panel, Stat } from './Panel';
 import { ModuleWidget } from './widgets';
 import { SettingsForm } from './SettingsForm';
-import { ActionPanel } from './ActionPanel';
+import { ModuleActionsPanel } from './ModuleActions';
 import { RequestProgress } from './RequestProgress';
 import { RunDetailDrawer } from './RunDetailDrawer';
+import { AiView } from './AiView';
 import {
   AutomationPanel,
   CameraPanel,
   IntelligencePanel,
   PortfolioPanel,
   ResearchPanel,
-  SocialAccountsPanel,
+  SocialPanel,
   VoicePanel,
 } from './modulePanels';
+import { CodingPanel } from './CodingPanel';
+import { FinancePanel } from './FinancePanel';
 import {
   SystemHealthWidget,
   ModulesWidget,
@@ -37,7 +42,7 @@ export function OverviewView({
   onNavigate: (view: string) => void;
 }) {
   const [runId, setRunId] = useState<string | null>(null);
-  const { data: runs } = useQuery({ queryKey: ['runs'], queryFn: api.runs });
+  const { data: runs } = useQuery({ queryKey: queryKeys.runs, queryFn: api.runs });
   const selectedRun = runs?.find((r) => r.id === runId) ?? null;
 
   return (
@@ -108,53 +113,41 @@ function extractResponse(data: unknown): string {
 
 export function AgentsView() {
   const qc = useQueryClient();
-  const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
-  const { data: runs } = useQuery({ queryKey: ['runs'], queryFn: api.runs });
+  const { data: agents } = useQuery({ queryKey: queryKeys.agents, queryFn: api.agents });
+  const { data: runs } = useQuery({ queryKey: queryKeys.runs, queryFn: api.runs });
   const [agentName, setAgentName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [result, setResult] = useState('');
   const [runId, setRunId] = useState<string | null>(null);
+  const [agentFilter, setAgentFilter] = useState('');
 
   const selected = agentName || agents?.[0]?.name || '';
   const selectedRun = runs?.find((r) => r.id === runId) ?? null;
+  const filteredRuns = (runs ?? []).filter(
+    (r) => !agentFilter || r.agentType === agentFilter,
+  );
 
-  const run = useMutation({
-    mutationFn: async () => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 120_000);
-      try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:4000/api/v1'}/agents/command`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ agentType: selected, prompt }),
-            signal: controller.signal,
-          },
-        );
-        const json = await res.json();
-        if (json.error) throw new Error(`${json.error.code}: ${json.error.message}`);
-        return json.data;
-      } finally {
-        clearTimeout(timer);
-      }
-    },
-    onSuccess: (data) => {
-      setResult(extractResponse(data));
-      qc.invalidateQueries({ queryKey: ['runs'] });
-    },
-    onError: (err) =>
-      setResult(
-        (err as Error).name === 'AbortError'
-          ? 'Error: Request timed out after 120s.'
-          : `Error: ${(err as Error).message}`,
-      ),
-  });
+  const run = useAgentCommand();
 
   const remove = useMutation({
     mutationFn: (name: string) => api.removeAgent(name),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.agents }),
   });
+
+  function handleRun() {
+    run.mutate(
+      { agentType: selected, prompt },
+      {
+        onSuccess: (data) => setResult(extractResponse(data)),
+        onError: (err) =>
+          setResult(
+            (err as Error).name === 'AbortError'
+              ? 'Error: Request timed out after 120s.'
+              : `Error: ${(err as Error).message}`,
+          ),
+      },
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -183,7 +176,7 @@ export function AgentsView() {
             className="w-full bg-panel2 border border-edge rounded-lg px-3 py-2 text-sm outline-none focus:border-accent"
           />
           <button
-            onClick={() => run.mutate()}
+            onClick={handleRun}
             disabled={run.isPending || !selected || !prompt.trim()}
             className="bg-accent text-bg font-semibold rounded-lg px-4 py-2 text-sm disabled:opacity-50"
           >
@@ -228,7 +221,9 @@ export function AgentsView() {
               </div>
               {a.dynamic && (
                 <button
-                  onClick={() => remove.mutate(a.name)}
+                  onClick={() => {
+                    if (confirm(`Remove agent "${a.name}"?`)) remove.mutate(a.name);
+                  }}
                   className="text-xs text-muted hover:text-red-400 shrink-0 ml-2"
                 >
                   remove
@@ -241,8 +236,20 @@ export function AgentsView() {
       </Panel>
 
       <Panel title="Run history" subtitle="click for details">
+        <select
+          value={agentFilter}
+          onChange={(e) => setAgentFilter(e.target.value)}
+          className="w-full mb-2 bg-panel2 border border-edge rounded-lg px-3 py-2 text-sm"
+        >
+          <option value="">All agents</option>
+          {(agents ?? []).map((a) => (
+            <option key={a.name} value={a.name}>
+              {a.name}
+            </option>
+          ))}
+        </select>
         <ul className="space-y-1 max-h-48 overflow-auto">
-          {(runs ?? []).map((r) => (
+          {filteredRuns.map((r) => (
             <li key={r.id}>
               <button
                 onClick={() => setRunId(r.id)}
@@ -271,7 +278,7 @@ function CreateAgentPanel() {
   const create = useMutation({
     mutationFn: () => api.createAgent({ name, role }),
     onSuccess: (info) => {
-      qc.invalidateQueries({ queryKey: ['agents'] });
+      qc.invalidateQueries({ queryKey: queryKeys.agents });
       setMsg(`Created "${info.name}". It's ready to use now.`);
       setName('');
       setRole('');
@@ -326,12 +333,12 @@ export function SecurityView() {
   const [auditFilter, setAuditFilter] = useState('');
   const [reason, setReason] = useState('');
   const { data: approvals } = useQuery({
-    queryKey: ['approvals'],
+    queryKey: queryKeys.approvals,
     queryFn: api.approvals,
   });
-  const { data: audit } = useQuery({ queryKey: ['audit'], queryFn: api.audit });
+  const { data: audit } = useQuery({ queryKey: queryKeys.audit, queryFn: api.audit });
   const { data: notifications } = useQuery({
-    queryKey: ['notifications'],
+    queryKey: queryKeys.notifications,
     queryFn: api.notifications,
   });
 
@@ -344,7 +351,9 @@ export function SecurityView() {
       decision: 'approved' | 'rejected';
     }) => api.resolveApproval(id, decision, reason || undefined),
     onSuccess: () => {
-      qc.invalidateQueries();
+      qc.invalidateQueries({ queryKey: queryKeys.approvals });
+      qc.invalidateQueries({ queryKey: queryKeys.audit });
+      qc.invalidateQueries({ queryKey: queryKeys.modules });
       setReason('');
     },
   });
@@ -405,7 +414,10 @@ export function SecurityView() {
         </ul>
       </Panel>
 
-      <Panel title="Notifications" subtitle="system">
+      <Panel title="Notifications" subtitle="read-only">
+        <p className="text-[11px] text-muted mb-2">
+          Notifications are system-generated and read-only until mark-read API is added.
+        </p>
         <ul className="space-y-2 max-h-64 overflow-auto">
           {(notifications ?? []).length === 0 && (
             <li className="text-muted text-xs">No notifications.</li>
@@ -450,11 +462,25 @@ export function SecurityView() {
 /* Module detail                                                      */
 /* ------------------------------------------------------------------ */
 
-export function ModuleDetailView({ moduleId }: { moduleId: string }) {
-  const { data: modules } = useQuery({ queryKey: ['modules'], queryFn: api.modules });
-  const { data: widgets } = useQuery({ queryKey: ['widgets'], queryFn: api.widgets });
+export function ModuleDetailView({
+  moduleId,
+  initialProjectId,
+}: {
+  moduleId: string;
+  initialProjectId?: string | null;
+}) {
+  const qc = useQueryClient();
+  const { data: modules } = useQuery({ queryKey: queryKeys.modules, queryFn: api.modules });
+  const { data: widgets } = useQuery({ queryKey: queryKeys.widgets, queryFn: api.widgets });
   const mod = modules?.find((m) => m.manifest.id === moduleId);
   const moduleWidgets = (widgets ?? []).filter((w) => w.moduleId === moduleId);
+
+  const invalidateModule = () => {
+    qc.invalidateQueries({ queryKey: queryKeys.modules });
+    qc.invalidateQueries({ queryKey: queryKeys.widgets });
+  };
+
+  if (moduleId === 'bellasos.llm') return <AiView />;
 
   if (!mod) return <p className="text-muted text-sm">Loading module...</p>;
 
@@ -477,16 +503,26 @@ export function ModuleDetailView({ moduleId }: { moduleId: string }) {
         </div>
       )}
 
-      <SettingsForm moduleId={moduleId} />
-      <ActionPanel moduleId={moduleId} actions={mod.manifest.actions} />
-
       {moduleId === 'bellasos.portfolio' && <PortfolioPanel />}
+      {moduleId === 'bellasos.finance' && <FinancePanel />}
       {moduleId === 'bellasos.research' && <ResearchPanel />}
       {moduleId === 'bellasos.intelligence' && <IntelligencePanel />}
       {moduleId === 'bellasos.automation' && <AutomationPanel />}
-      {moduleId === 'bellasos.social' && <SocialAccountsPanel />}
+      {moduleId === 'bellasos.social' && <SocialPanel />}
       {moduleId === 'bellasos.voice' && <VoicePanel />}
       {moduleId === 'bellasos.camera' && <CameraPanel />}
+      {moduleId === 'bellasos.coding' && <CodingPanel initialProjectId={initialProjectId} />}
+
+      {moduleId !== 'bellasos.coding' && (
+        <>
+          <SettingsForm moduleId={moduleId} />
+          <ModuleActionsPanel
+            moduleId={moduleId}
+            actions={mod.manifest.actions}
+            onInvalidate={invalidateModule}
+          />
+        </>
+      )}
     </div>
   );
 }

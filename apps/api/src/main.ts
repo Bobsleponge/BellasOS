@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import { NestFactory } from '@nestjs/core';
 import { Platform } from '@bellasos/runtime';
+import { getIngestionService } from '@bellasos/core-ingestion';
 import { createLogger, httpRequests } from '@bellasos/observability';
 import type { Request, Response, NextFunction } from 'express';
 import { AppModule } from './app.module';
@@ -43,6 +44,15 @@ async function bootstrap(): Promise<void> {
   await app.listen(port, host);
   log.info(`BellasOS API listening on http://${host}:${port}${basePath}`);
   warmupTranscriber();
+
+  if (process.env.INGEST_BOOT_COLLECT !== 'false') {
+    setTimeout(() => {
+      getIngestionService()
+        .runWorldCollection()
+        .then((r) => log.info('boot world collection complete', r))
+        .catch((err) => log.warn('boot world collection failed', { error: (err as Error).message }));
+    }, 8_000);
+  }
 }
 
 bootstrap().catch((err) => {

@@ -13,6 +13,8 @@ import { ok } from '@bellasos/contracts';
 import { getDb, isDbAvailable } from '@bellasos/db';
 import { PLATFORM, type Platform } from './platform.token';
 import type { AuthedRequest } from './auth.guard';
+import { Public } from './auth.guard';
+import { portfolioSyncKeyFromRequest } from './portfolio-sync';
 
 function maskSecret(value: string | undefined): string | undefined {
   if (!value) return undefined;
@@ -203,6 +205,19 @@ export class IntegrationsController {
             })),
           );
       }
+      if (
+        m.manifest.id === 'bellasos.finance-tracker' &&
+        isDbAvailable() &&
+        !creds.apiKey &&
+        linked.some((l) => l.platform === 'finance-tracker' && l.status === 'connected')
+      ) {
+        await getDb()
+          .deleteFrom('core.integrations')
+          .where('module_id', '=', 'bellasos.finance-tracker')
+          .where('platform', '=', 'finance-tracker')
+          .execute();
+        linked = linked.filter((l) => l.platform !== 'finance-tracker');
+      }
       items.push({
         moduleId: m.manifest.id,
         name: m.manifest.name,
@@ -269,6 +284,250 @@ export class IntegrationsController {
         .execute();
     }
     return ok({ disconnected: true }, req.traceId);
+  }
+
+  @Post('portfolio/connect')
+  async connectPortfolio(
+    @Req() req: AuthedRequest,
+    @Body()
+    body: {
+      syncUrl: string;
+      appName: string;
+      apiKey?: string;
+    },
+  ) {
+    const syncUrl = body.syncUrl?.trim();
+    const appName = body.appName?.trim() || 'Financial tracker';
+    if (!syncUrl) {
+      return ok({ ok: false, error: 'syncUrl is required' }, req.traceId);
+    }
+
+    const apiKey = body.apiKey?.trim() || crypto.randomUUID();
+    const ns = 'module:bellasos.portfolio';
+
+    await this.platform.config.setSecret(ns, 'syncApiKey', apiKey);
+    await this.platform.config.set(ns, 'externalSyncUrl', syncUrl);
+    await this.platform.config.set(ns, 'syncAppName', appName);
+    await this.platform.config.set(ns, 'syncEnabled', true);
+
+    if (isDbAvailable()) {
+      await getDb()
+        .insertInto('core.integrations')
+        .values({
+          user_id: req.principal.id,
+          module_id: 'bellasos.portfolio',
+          platform: 'external-app',
+          account_name: appName,
+          status: 'connected',
+          token_ref: 'portfolio:syncApiKey',
+          metadata: { syncUrl },
+        })
+        .onConflict((oc) =>
+          oc.columns(['user_id', 'module_id', 'platform']).doUpdateSet({
+            account_name: appName,
+            status: 'connected',
+            metadata: { syncUrl },
+            updated_at: new Date().toISOString(),
+          }),
+        )
+        .execute();
+    }
+
+    return ok(
+      {
+        connected: true,
+        appName,
+        syncUrl,
+        apiKey,
+        webhookUrl: '/api/v1/integrations/portfolio/webhook',
+        exportUrl: '/api/v1/integrations/portfolio/export',
+      },
+      req.traceId,
+    );
+  }
+
+  @Delete('portfolio/disconnect')
+  async disconnectPortfolio(@Req() req: AuthedRequest) {
+    const ns = 'module:bellasos.portfolio';
+    await this.platform.config.deleteSecret(ns, 'syncApiKey');
+    await this.platform.config.set(ns, 'syncEnabled', false);
+    await this.platform.config.set(ns, 'externalSyncUrl', '');
+    await this.platform.config.set(ns, 'syncAppName', '');
+
+    if (isDbAvailable()) {
+      await getDb()
+        .deleteFrom('core.integrations')
+        .where('module_id', '=', 'bellasos.portfolio')
+        .where('platform', '=', 'external-app')
+        .execute();
+    }
+
+    return ok({ disconnected: true }, req.traceId);
+  }
+
+  private async clearFinanceTrackerIntegration(): Promise<void> {
+    if (!isDbAvailable()) return;
+    await getDb()
+      .deleteFrom('core.integrations')
+      .where('module_id', '=', 'bellasos.finance-tracker')
+      .where('platform', '=', 'finance-tracker')
+      .execute();
+  }
+
+  @Post('finance-tracker/connect')
+  async connectFinanceTracker(
+    @Req() req: AuthedRequest,
+    @Body() body: { baseUrl?: string; apiKey: string },
+  ) {
+    const apiKey = body.apiKey?.trim();
+    if (!apiKey) {
+      return ok({ connected: false, error: 'apiKey is required' }, req.traceId);
+    }
+
+    const baseUrl = body.baseUrl?.trim() || 'http://localhost:5000';
+    const ns = 'module:bellasos.finance-tracker';
+    const previousKey = await this.platform.config.getSecret(ns, 'apiKey');
+    const previousBaseUrl = await this.platform.config.get<string>(ns, 'baseUrl');
+
+    await this.platform.config.setSecret(ns, 'apiKey', apiKey);
+    await this.platform.config.set(ns, 'baseUrl', baseUrl);
+
+    const storedKey = await this.platform.config.getSecret(ns, 'apiKey');
+    if (storedKey !== apiKey) {
+      if (previousKey) {
+        await this.platform.config.setSecret(ns, 'apiKey', previousKey);
+      } else {
+        await this.platform.config.deleteSecret(ns, 'apiKey');
+      }
+      if (previousBaseUrl) {
+        await this.platform.config.set(ns, 'baseUrl', previousBaseUrl);
+      }
+      return ok(
+        {
+          connected: false,
+          error:
+            'Failed to store API key. Ensure the BellasOS database is running (DATABASE_URL).',
+        },
+        req.traceId,
+      );
+    }
+
+    const status = await this.platform.registry.dispatch<{
+      connected?: boolean;
+      error?: string;
+      user?: { email?: string; name?: string };
+      baseUrl?: string;
+    }>(
+      'bellasos.finance-tracker',
+      'connection.status',
+      {},
+      { principal: req.principal, traceId: req.traceId },
+    );
+
+    if (!status.connected) {
+      if (previousKey) {
+        await this.platform.config.setSecret(ns, 'apiKey', previousKey);
+        if (previousBaseUrl) {
+          await this.platform.config.set(ns, 'baseUrl', previousBaseUrl);
+        }
+      } else {
+        await this.platform.config.deleteSecret(ns, 'apiKey');
+        await this.clearFinanceTrackerIntegration();
+      }
+      return ok(
+        {
+          connected: false,
+          error: status.error ?? 'Could not connect to Finance-Tracker with that API key',
+        },
+        req.traceId,
+      );
+    }
+
+    if (isDbAvailable()) {
+      await getDb()
+        .insertInto('core.integrations')
+        .values({
+          user_id: req.principal.id,
+          module_id: 'bellasos.finance-tracker',
+          platform: 'finance-tracker',
+          account_name: status.user?.email ?? 'Finance-Tracker',
+          status: 'connected',
+          token_ref: 'finance-tracker:apiKey',
+          metadata: { baseUrl },
+        })
+        .onConflict((oc) =>
+          oc.columns(['user_id', 'module_id', 'platform']).doUpdateSet({
+            account_name: status.user?.email ?? 'Finance-Tracker',
+            status: 'connected',
+            metadata: { baseUrl },
+            updated_at: new Date().toISOString(),
+          }),
+        )
+        .execute();
+    }
+
+    return ok(
+      {
+        connected: true,
+        baseUrl,
+        user: status.user,
+      },
+      req.traceId,
+    );
+  }
+
+  @Delete('finance-tracker/disconnect')
+  async disconnectFinanceTracker(@Req() req: AuthedRequest) {
+    const ns = 'module:bellasos.finance-tracker';
+    await this.platform.config.deleteSecret(ns, 'apiKey');
+    await this.clearFinanceTrackerIntegration();
+
+    return ok({ disconnected: true }, req.traceId);
+  }
+
+  @Public()
+  @Get('portfolio/export')
+  async exportPortfolio(@Req() req: AuthedRequest) {
+    const key = await portfolioSyncKeyFromRequest(this.platform, req);
+    if (!key) {
+      return ok({ ok: false, error: 'Invalid or missing sync API key' }, req.traceId);
+    }
+
+    const payload = await this.platform.registry.dispatch(
+      'bellasos.portfolio',
+      'sync.export',
+      {},
+      { principal: req.principal, traceId: req.traceId },
+    );
+
+    return ok(payload, req.traceId);
+  }
+
+  @Public()
+  @Post('portfolio/webhook')
+  async portfolioWebhook(@Req() req: AuthedRequest, @Body() body: unknown) {
+    const key = await portfolioSyncKeyFromRequest(this.platform, req);
+    if (!key) {
+      return ok({ ok: false, error: 'Invalid or missing sync API key' }, req.traceId);
+    }
+
+    const payload = body as {
+      holdings: unknown;
+      watchlist?: unknown;
+    };
+
+    const result = await this.platform.registry.dispatch(
+      'bellasos.portfolio',
+      'holdings.import',
+      {
+        holdings: payload.holdings,
+        watchlist: payload.watchlist,
+        source: 'webhook',
+      },
+      { principal: req.principal, traceId: req.traceId },
+    );
+
+    return ok({ received: true, ...((result as object) ?? {}) }, req.traceId);
   }
 }
 

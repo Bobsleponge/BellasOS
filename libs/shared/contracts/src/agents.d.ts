@@ -1,4 +1,4 @@
-export type AgentType = 'research' | 'intelligence' | 'portfolio' | 'automation' | 'social' | 'coding' | 'operations' | 'memory' | 'orchestrator';
+export type AgentType = 'research' | 'intelligence' | 'portfolio' | 'finance' | 'automation' | 'social' | 'coding' | 'operations' | 'memory' | 'orchestrator';
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export interface AgentTask {
     id: string;

@@ -2,6 +2,7 @@ export type AgentType =
   | 'research'
   | 'intelligence'
   | 'portfolio'
+  | 'finance'
   | 'automation'
   | 'social'
   | 'coding'

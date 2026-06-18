@@ -8,8 +8,7 @@ import { BaseAgent } from '@bellasos/agents-framework';
 
 /**
  * Research Agent: investigates companies/industries, produces a structured
- * report and an optional investment thesis, persists findings to long-term
- * memory, and emits `research.completed`.
+ * report and persists findings. Uses bellasos.research module when available.
  */
 export class ResearchAgent extends BaseAgent {
   readonly type: AgentType = 'research';
@@ -21,7 +20,16 @@ export class ResearchAgent extends BaseAgent {
     const kind = String(task.input.kind ?? 'company');
     const ownerId = String(task.input.ownerId ?? task.actorId ?? 'system');
 
-    // Ground the report with any relevant prior knowledge.
+    if (this.deps.modules && subject !== 'unknown') {
+      const result = await this.deps.modules.invoke(
+        'bellasos.research',
+        'run',
+        { subject, kind },
+        task,
+      );
+      return { output: result as Record<string, unknown> };
+    }
+
     const priors = await this.deps.memory.recall({
       ownerId,
       query: subject,
@@ -37,9 +45,7 @@ export class ResearchAgent extends BaseAgent {
         {
           role: 'system',
           content:
-            'You are a meticulous research analyst. Produce a concise, ' +
-            'well-structured report with sections: Overview, Key Facts, ' +
-            'Risks, Opportunities, and (if relevant) an Investment Thesis.',
+            'You are a meticulous research analyst. Produce a concise, well-structured report with sections: Overview, Key Facts, Risks, Opportunities, and (if relevant) an Investment Thesis.',
         },
         {
           role: 'user',

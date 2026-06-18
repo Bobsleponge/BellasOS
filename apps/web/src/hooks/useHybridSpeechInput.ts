@@ -12,6 +12,7 @@ export interface HybridSpeechInput {
   mode: SpeechMode;
   start: () => Promise<void>;
   stop: () => void;
+  cancel: () => void;
   supported: boolean;
   error: string | null;
   clearError: () => void;
@@ -44,12 +45,17 @@ export function useHybridSpeechInput(
     local.stop();
   }, [local]);
 
+  const cancel = useCallback(() => {
+    local.cancel();
+  }, [local]);
+
   return {
     listening: local.listening,
     processing: local.processing,
     mode: 'local',
     start,
     stop,
+    cancel,
     supported: local.supported,
     error: local.error,
     clearError: local.clearError,

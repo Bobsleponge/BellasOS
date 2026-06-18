@@ -128,7 +128,7 @@ async function touchIntegrationSync(platform: string): Promise<void> {
 
 export function formatDocsForPrompt(docs: IngestDocument[], maxChars = 14_000): string {
   if (docs.length === 0) {
-    return 'No live sources retrieved. Configure TAVILY_API_KEY, SERPER_API_KEY, or NEWSAPI_KEY for fresh data.';
+    return 'No live sources retrieved for this question yet. RSS, Yahoo Finance, and forex pairs work without keys.';
   }
   const lines: string[] = [];
   let used = 0;
@@ -150,5 +150,6 @@ export function docsToSourceRefs(docs: IngestDocument[]) {
     url: d.url,
     title: d.title,
     fetchedAt: d.fetchedAt,
+    source: d.source,
   }));
 }

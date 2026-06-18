@@ -1,14 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { Mic, MicOff, Send } from 'lucide-react';
+import { Mic, MicOff, Send, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { useJarvisSession } from '@/hooks/useJarvisSession';
+import { useJarvisBootstrap, useJarvisSession } from '@/hooks/useJarvisSession';
 import { useVoiceSession } from '@/components/shell/VoiceSessionProvider';
-import { useShellStore } from '@/stores/shellStore';
+import { JarvisHistoryPanel } from '@/components/shell/JarvisHistoryPanel';
+import { useShellStore, type EqState } from '@/stores/shellStore';
+import { VOICE_CANCEL_HINT } from '@/lib/voiceCancel';
 
-const STATUS_LABEL: Record<string, string> = {
+const STATUS_LABEL: Record<EqState, string> = {
   idle: 'Voice off',
   listening: 'Listening…',
   heard: 'Heard you',
@@ -17,7 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
   speaking: 'Jarvis is speaking…',
 };
 
-const STATUS_VARIANT: Record<string, 'default' | 'success' | 'muted'> = {
+const STATUS_VARIANT: Record<EqState, 'default' | 'success' | 'muted'> = {
   idle: 'muted',
   listening: 'success',
   heard: 'default',
@@ -26,9 +28,16 @@ const STATUS_VARIANT: Record<string, 'default' | 'success' | 'muted'> = {
   speaking: 'default',
 };
 
+function isBusyState(state: EqState): boolean {
+  return state === 'thinking' || state === 'transcribing' || state === 'speaking';
+}
+
 export function JarvisPresence() {
+  useJarvisBootstrap();
+
   const transcript = useShellStore((s) => s.transcript);
   const eqState = useShellStore((s) => s.eqState);
+  const jarvisPending = useShellStore((s) => s.jarvisPending);
   const heardCaption = useShellStore((s) => s.heardCaption);
   const {
     micListening,
@@ -38,12 +47,16 @@ export function JarvisPresence() {
     speechError,
     mode,
     toggleMicListening,
+    stopJarvis,
+    canStopJarvis,
   } = useVoiceSession();
   const { sendMessage } = useJarvisSession();
   const [text, setText] = useState('');
 
+  const busy = isBusyState(eqState) || jarvisPending;
+
   const submitText = () => {
-    if (!text.trim() || eqState === 'thinking' || eqState === 'speaking') return;
+    if (!text.trim() || busy) return;
     sendMessage(text);
     setText('');
   };
@@ -51,30 +64,23 @@ export function JarvisPresence() {
   const lastLines = transcript.slice(-4);
   const statusText = micListening
     ? STATUS_LABEL[eqState] ?? 'Voice on'
-    : eqState === 'thinking' || eqState === 'speaking' || eqState === 'transcribing'
-      ? STATUS_LABEL[eqState] ?? eqState
-      : 'Mic off — click to talk';
+    : 'Mic off — click to talk';
 
   return (
     <div className="flex flex-col items-center gap-4 w-full max-w-2xl mx-auto px-4">
       <div className="flex flex-col items-center gap-1">
-        <Badge variant={STATUS_VARIANT[eqState] ?? 'muted'}>{statusText}</Badge>
+        <Badge variant={STATUS_VARIANT[eqState] ?? 'muted'} className="backdrop-blur-md bg-black/20 border-cyan-500/20">
+          {statusText}
+        </Badge>
         {micListening && listening && !processing && eqState === 'listening' && (
           <span className="text-xs text-accent animate-pulse">Mic live — speak now</span>
         )}
         {heardCaption && (
           <span className="text-xs text-amber-200">{heardCaption}</span>
         )}
-        {eqState === 'transcribing' && (
-          <span className="text-xs text-amber-300 animate-pulse">Transcribing your speech…</span>
-        )}
-        {eqState === 'thinking' && (
-          <span className="text-xs text-sky-300 animate-pulse">Jarvis is thinking…</span>
-        )}
-        {eqState === 'speaking' && (
-          <span className="text-xs text-violet-300">Jarvis is speaking — mic paused</span>
-        )}
       </div>
+
+      <JarvisHistoryPanel />
 
       <div className="w-full min-h-[4rem] text-center space-y-1">
         {lastLines.map((line, i) => (
@@ -91,12 +97,12 @@ export function JarvisPresence() {
         ))}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 w-full max-w-md">
         <Button
           variant={micListening ? 'default' : 'glass'}
           size="icon"
           onClick={toggleMicListening}
-          disabled={!supported || eqState === 'transcribing' || eqState === 'thinking'}
+          disabled={!supported || (busy && !canStopJarvis)}
           title={
             micListening
               ? 'Stop listening (Jarvis keeps responding if busy)'
@@ -111,16 +117,29 @@ export function JarvisPresence() {
             <MicOff className="w-5 h-5" />
           )}
         </Button>
+        {canStopJarvis && (
+          <Button
+            type="button"
+            variant="destructive"
+            size="icon"
+            onClick={stopJarvis}
+            title="Stop Jarvis — use if it misheard you"
+            aria-label="Stop Jarvis"
+          >
+            <Square className="w-4 h-4 fill-current" />
+          </Button>
+        )}
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submitText()}
           placeholder="Or type to Jarvis..."
-          className="flex-1 min-w-[12rem] max-w-md bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50"
+          disabled={busy}
+          className="flex-1 min-w-[12rem] bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50 disabled:opacity-60"
         />
         <Button
           onClick={submitText}
-          disabled={eqState === 'thinking' || eqState === 'speaking' || !text.trim()}
+          disabled={busy || !text.trim()}
           size="icon"
           variant="default"
         >
@@ -138,7 +157,7 @@ export function JarvisPresence() {
       )}
       {micListening && (
         <p className="text-xs text-muted">
-          Speak naturally, then pause ~1 second. Mode: local Whisper ({mode}).
+          Speak naturally, then pause ~1 second. {VOICE_CANCEL_HINT} Mode: local Whisper ({mode}).
         </p>
       )}
     </div>

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { JarvisSessionSummary } from '@/lib/api';
 
 export type EqState =
   | 'idle'
@@ -32,7 +33,15 @@ interface ShellState {
   windows: ShellWindow[];
   focusedWindowId: string | null;
   transcript: Array<{ role: 'user' | 'jarvis'; text: string }>;
+  /** True from send until reply/error (survives eqState overwrites). */
+  jarvisPending: boolean;
+  jarvisSessionId: string | null;
+  jarvisSessions: JarvisSessionSummary[];
+  jarvisHistoryOpen: boolean;
+  /** Coding project currently open in Studio — sent with Jarvis refine requests. */
+  activeCodingProjectId: string | null;
   setEqState: (state: EqState) => void;
+  setJarvisPending: (pending: boolean) => void;
   setVoiceSessionActive: (active: boolean) => void;
   setMicListening: (listening: boolean) => void;
   setHeardCaption: (caption: string | null) => void;
@@ -44,6 +53,11 @@ interface ShellState {
   toggleMinimize: (id: string) => void;
   moveWindow: (id: string, x: number, y: number) => void;
   addTranscript: (role: 'user' | 'jarvis', text: string) => void;
+  setTranscript: (transcript: Array<{ role: 'user' | 'jarvis'; text: string }>) => void;
+  setJarvisSessionId: (sessionId: string | null) => void;
+  setJarvisSessions: (sessions: JarvisSessionSummary[]) => void;
+  setJarvisHistoryOpen: (open: boolean) => void;
+  setActiveCodingProjectId: (projectId: string | null) => void;
 }
 
 let zCounter = 10;
@@ -62,7 +76,13 @@ export const useShellStore = create<ShellState>((set, get) => ({
   windows: [],
   focusedWindowId: null,
   transcript: [{ role: 'jarvis', text: 'BellasOS online. Click the mic to start voice.' }],
+  jarvisPending: false,
+  jarvisSessionId: null,
+  jarvisSessions: [],
+  jarvisHistoryOpen: false,
+  activeCodingProjectId: null,
   setEqState: (eqState) => set({ eqState }),
+  setJarvisPending: (jarvisPending) => set({ jarvisPending }),
   setVoiceSessionActive: (voiceSessionActive) => set({ voiceSessionActive }),
   setMicListening: (micListening) => set({ micListening }),
   setHeardCaption: (heardCaption) => set({ heardCaption }),
@@ -121,4 +141,9 @@ export const useShellStore = create<ShellState>((set, get) => ({
     }),
   addTranscript: (role, text) =>
     set({ transcript: [...get().transcript, { role, text }] }),
+  setTranscript: (transcript) => set({ transcript }),
+  setJarvisSessionId: (jarvisSessionId) => set({ jarvisSessionId }),
+  setJarvisSessions: (jarvisSessions) => set({ jarvisSessions }),
+  setJarvisHistoryOpen: (jarvisHistoryOpen) => set({ jarvisHistoryOpen }),
+  setActiveCodingProjectId: (activeCodingProjectId) => set({ activeCodingProjectId }),
 }));

@@ -1,23 +1,18 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  isImpulsiveSound,
+  isLiveSpeechFrame,
+  normalizeForStt,
+} from '@/lib/speechDetection';
 
-const DEFAULT_SILENCE_MS = Number(process.env.NEXT_PUBLIC_SILENCE_MS ?? 1200);
-const MIN_UTTERANCE_S = 0.25;
+const DEFAULT_SILENCE_MS = Number(process.env.NEXT_PUBLIC_SILENCE_MS ?? 1400);
+const MIN_UTTERANCE_S = 0.4;
+const SPEECH_ARM_MS = 180;
 
 function normalizeAudio(samples: Float32Array): Float32Array {
-  let peak = 0;
-  for (let i = 0; i < samples.length; i++) {
-    peak = Math.max(peak, Math.abs(samples[i] ?? 0));
-  }
-  if (peak < 0.001) return samples;
-  const target = 0.92;
-  const gain = target / peak;
-  const out = new Float32Array(samples.length);
-  for (let i = 0; i < samples.length; i++) {
-    out[i] = Math.max(-1, Math.min(1, (samples[i] ?? 0) * gain));
-  }
-  return out;
+  return normalizeForStt(samples);
 }
 
 async function resampleTo16k(
@@ -73,35 +68,26 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
-const BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:4000/api/v1';
+import { api } from '@/lib/api';
 
-async function transcribeBlob(blob: Blob): Promise<string> {
-  const form = new FormData();
-  form.append('audio', blob, 'speech.wav');
+async function transcribeBlob(blob: Blob, signal?: AbortSignal): Promise<string> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 300_000);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort);
   try {
-    const res = await fetch(`${BASE}/jarvis/transcribe`, {
-      method: 'POST',
-      body: form,
-      signal: controller.signal,
-    });
-    const json = (await res.json()) as {
-      data?: { text?: string; error?: string } | null;
-      error?: { message?: string } | null;
-    };
-    if (json.error?.message) throw new Error(json.error.message);
-    const data = json.data;
-    if (data?.error) throw new Error(data.error);
-    return (data?.text ?? '').trim();
+    return await api.jarvisTranscribe(blob, controller.signal);
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
+      if (signal?.aborted) {
+        throw new Error('CANCELLED');
+      }
       throw new Error('Speech model is still loading on the server. Wait a minute and try again.');
     }
     throw err;
   } finally {
     window.clearTimeout(timeout);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -110,6 +96,7 @@ export interface LocalSpeechInput {
   processing: boolean;
   start: () => Promise<void>;
   stop: () => void;
+  cancel: () => void;
   supported: boolean;
   error: string | null;
   clearError: () => void;
@@ -123,6 +110,13 @@ export function useLocalSpeechInput(
   const [listening, setListening] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [supported, setSupported] = useState(false);
+
+  useEffect(() => {
+    setSupported(
+      Boolean(navigator.mediaDevices?.getUserMedia) && typeof AudioContext !== 'undefined',
+    );
+  }, []);
 
   const onFinalRef = useRef(onFinal);
   const onProcessingRef = useRef(onProcessing);
@@ -146,6 +140,10 @@ export function useLocalSpeechInput(
   const calibratingRef = useRef(true);
   const calibrateUntilRef = useRef(0);
   const calibrateSamplesRef = useRef<number[]>([]);
+  const speechStreakStartRef = useRef(0);
+  const armedRef = useRef(false);
+  const utteranceGenerationRef = useRef(0);
+  const transcribeAbortRef = useRef<AbortController | null>(null);
 
   const envThreshold = Number(process.env.NEXT_PUBLIC_VAD_THRESHOLD ?? 0);
 
@@ -170,6 +168,8 @@ export function useLocalSpeechInput(
     ringBufferRef.current = [];
     calibratingRef.current = true;
     calibrateSamplesRef.current = [];
+    speechStreakStartRef.current = 0;
+    armedRef.current = false;
   }, []);
 
   const finalizeUtterance = useCallback(async () => {
@@ -177,16 +177,10 @@ export function useLocalSpeechInput(
     const chunks = speechChunksRef.current;
     speechChunksRef.current = [];
     if (!ctx || !activeRef.current) return;
-    if (chunks.length === 0) {
-      setError('No speech detected. Speak closer to the mic, then pause briefly.');
-      return;
-    }
+    if (chunks.length === 0) return;
 
     const total = chunks.reduce((n, c) => n + c.length, 0);
-    if (total < ctx.sampleRate * MIN_UTTERANCE_S) {
-      setError('Speech was too short. Say a full sentence, then pause.');
-      return;
-    }
+    if (total < ctx.sampleRate * MIN_UTTERANCE_S) return;
 
     let merged = new Float32Array(total);
     let offset = 0;
@@ -195,36 +189,59 @@ export function useLocalSpeechInput(
       offset += chunk.length;
     }
 
+    if (isImpulsiveSound(merged, ctx.sampleRate)) return;
+
     const normalized = normalizeAudio(merged);
+    const generation = ++utteranceGenerationRef.current;
+
     onHeardRef.current?.();
     setProcessingState(true);
     setError(null);
+    transcribeAbortRef.current?.abort();
+    const abort = new AbortController();
+    transcribeAbortRef.current = abort;
     try {
       const pcm16k = await resampleTo16k(normalized, ctx.sampleRate);
       const wav = encodeWav(pcm16k, 16_000);
-      const text = await transcribeBlob(wav);
+      const text = await transcribeBlob(wav, abort.signal);
+      if (generation !== utteranceGenerationRef.current) return;
       if (text) {
         setError(null);
         onFinalRef.current(text);
-      } else {
-        setError(
-          'Could not transcribe that. Speak clearly, a bit louder, then pause briefly.',
-        );
       }
     } catch (err) {
-      setError((err as Error).message || 'Local transcription failed.');
+      if (generation !== utteranceGenerationRef.current) return;
+      const msg = (err as Error).message || 'Local transcription failed.';
+      if (msg === 'CANCELLED') return;
+      setError(msg);
     } finally {
-      setProcessingState(false);
+      if (generation === utteranceGenerationRef.current) {
+        transcribeAbortRef.current = null;
+        setProcessingState(false);
+      }
     }
   }, [setProcessingState]);
 
+  const cancel = useCallback(() => {
+    utteranceGenerationRef.current += 1;
+    transcribeAbortRef.current?.abort();
+    transcribeAbortRef.current = null;
+    speakingRef.current = false;
+    armedRef.current = false;
+    silenceStartRef.current = 0;
+    speechStreakStartRef.current = 0;
+    speechChunksRef.current = [];
+    setProcessingState(false);
+    setError(null);
+  }, [setProcessingState]);
+
   const stop = useCallback(() => {
+    cancel();
     activeRef.current = false;
     startingRef.current = false;
     setListening(false);
-    setProcessingState(false);
     cleanup();
-  }, [cleanup, setProcessingState]);
+  }, [cancel, cleanup]);
 
   const start = useCallback(async () => {
     if (activeRef.current || startingRef.current) return;
@@ -247,7 +264,7 @@ export function useLocalSpeechInput(
       });
       streamRef.current = stream;
 
-      const ctx = new AudioContext();
+      const ctx = new AudioContext({ sampleRate: 16_000 });
       ctxRef.current = ctx;
       if (ctx.state === 'suspended') {
         await ctx.resume();
@@ -285,7 +302,9 @@ export function useLocalSpeechInput(
       const tick = () => {
         if (!activeRef.current) return;
         const timeDomain = new Uint8Array(analyser.fftSize);
+        const freqData = new Uint8Array(analyser.frequencyBinCount);
         analyser.getByteTimeDomainData(timeDomain);
+        analyser.getByteFrequencyData(freqData);
         let sum = 0;
         for (let i = 0; i < timeDomain.length; i++) {
           const sample = (timeDomain[i]! - 128) / 128;
@@ -310,24 +329,51 @@ export function useLocalSpeechInput(
           return;
         }
 
+        if (calibratingRef.current) {
+          rafRef.current = requestAnimationFrame(tick);
+          return;
+        }
+
         const floor = envThreshold > 0 ? envThreshold : noiseFloorRef.current;
         const startThreshold = Math.max(0.008, floor * 3);
         const continueThreshold = Math.max(0.006, floor * 2);
         const threshold = speakingRef.current ? continueThreshold : startThreshold;
         const silenceMs = DEFAULT_SILENCE_MS;
 
-        if (rms > threshold) {
-          if (!speakingRef.current && !calibratingRef.current) {
+        const liveSpeech = isLiveSpeechFrame(
+          rms,
+          threshold,
+          freqData,
+          ctx.sampleRate,
+          analyser.fftSize,
+          armedRef.current && speakingRef.current,
+        );
+
+        if (liveSpeech) {
+          if (!speechStreakStartRef.current) speechStreakStartRef.current = now;
+          const streakMs = now - speechStreakStartRef.current;
+          if (!armedRef.current && streakMs >= SPEECH_ARM_MS) {
+            armedRef.current = true;
             speakingRef.current = true;
-            speechChunksRef.current = ringBufferRef.current.slice(-8);
+            speechChunksRef.current = ringBufferRef.current.slice(-12);
+          } else if (armedRef.current && speakingRef.current) {
+            /* already recording */
           }
           silenceStartRef.current = 0;
-        } else if (speakingRef.current) {
-          if (!silenceStartRef.current) silenceStartRef.current = now;
-          if (now - silenceStartRef.current >= silenceMs) {
+        } else {
+          speechStreakStartRef.current = 0;
+          if (!armedRef.current) {
             speakingRef.current = false;
-            silenceStartRef.current = 0;
-            void finalizeUtterance();
+            speechChunksRef.current = [];
+          } else if (speakingRef.current) {
+            if (!silenceStartRef.current) silenceStartRef.current = now;
+            if (now - silenceStartRef.current >= silenceMs) {
+              speakingRef.current = false;
+              armedRef.current = false;
+              silenceStartRef.current = 0;
+              speechStreakStartRef.current = 0;
+              void finalizeUtterance();
+            }
           }
         }
 
@@ -344,16 +390,12 @@ export function useLocalSpeechInput(
     }
   }, [cleanup, finalizeUtterance, stop]);
 
-  const supported =
-    typeof window !== 'undefined' &&
-    Boolean(navigator.mediaDevices?.getUserMedia) &&
-    typeof AudioContext !== 'undefined';
-
   return {
     listening,
     processing,
     start,
     stop,
+    cancel,
     supported,
     error,
     clearError: () => setError(null),

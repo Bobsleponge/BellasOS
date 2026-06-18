@@ -2,6 +2,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 
 export function IntegrationCard({
   moduleId,
@@ -18,7 +19,11 @@ export function IntegrationCard({
   const toggle = useMutation({
     mutationFn: (enable: boolean) =>
       enable ? api.enableModule(moduleId) : api.disableModule(moduleId),
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.modules });
+      qc.invalidateQueries({ queryKey: queryKeys.health });
+      qc.invalidateQueries({ queryKey: queryKeys.integrations });
+    },
   });
 
   return (
