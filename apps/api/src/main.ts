@@ -6,6 +6,7 @@ import { Platform } from '@bellasos/runtime';
 import { createLogger, httpRequests } from '@bellasos/observability';
 import type { Request, Response, NextFunction } from 'express';
 import { AppModule } from './app.module';
+import { warmupTranscriber } from './stt.service';
 
 // Load monorepo root .env regardless of process cwd (e.g. Start-Process).
 loadEnv({ path: resolve(__dirname, '../../../.env') });
@@ -41,6 +42,7 @@ async function bootstrap(): Promise<void> {
   const host = process.env.API_HOST ?? '0.0.0.0';
   await app.listen(port, host);
   log.info(`BellasOS API listening on http://${host}:${port}${basePath}`);
+  warmupTranscriber();
 }
 
 bootstrap().catch((err) => {

@@ -2,6 +2,9 @@
 
 import { useCallback, useRef, useState } from 'react';
 
+const DEFAULT_SILENCE_MS = Number(process.env.NEXT_PUBLIC_SILENCE_MS ?? 1200);
+const MIN_UTTERANCE_S = 0.25;
+
 function normalizeAudio(samples: Float32Array): Float32Array {
   let peak = 0;
   for (let i = 0; i < samples.length; i++) {
@@ -22,17 +25,18 @@ async function resampleTo16k(
   fromRate: number,
 ): Promise<Float32Array> {
   if (fromRate === 16_000) return samples;
-  const duration = samples.length / fromRate;
-  const frames = Math.max(1, Math.ceil(duration * 16_000));
-  const offline = new OfflineAudioContext(1, frames, 16_000);
-  const buffer = offline.createBuffer(1, samples.length, fromRate);
-  buffer.copyToChannel(samples, 0);
-  const source = offline.createBufferSource();
-  source.buffer = buffer;
-  source.connect(offline.destination);
-  source.start(0);
-  const rendered = await offline.startRendering();
-  return rendered.getChannelData(0).slice();
+  const ratio = fromRate / 16_000;
+  const outLength = Math.max(1, Math.floor(samples.length / ratio));
+  const output = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i++) {
+    const srcIdx = i * ratio;
+    const idx = Math.floor(srcIdx);
+    const frac = srcIdx - idx;
+    const a = samples[idx] ?? 0;
+    const b = samples[idx + 1] ?? a;
+    output[i] = a * (1 - frac) + b * frac;
+  }
+  return output;
 }
 
 function encodeWav(samples: Float32Array, sampleRate: number): Blob {
@@ -114,6 +118,7 @@ export interface LocalSpeechInput {
 export function useLocalSpeechInput(
   onFinal: (text: string) => void,
   onProcessing?: (active: boolean) => void,
+  onHeard?: () => void,
 ): LocalSpeechInput {
   const [listening, setListening] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -121,8 +126,10 @@ export function useLocalSpeechInput(
 
   const onFinalRef = useRef(onFinal);
   const onProcessingRef = useRef(onProcessing);
+  const onHeardRef = useRef(onHeard);
   onFinalRef.current = onFinal;
   onProcessingRef.current = onProcessing;
+  onHeardRef.current = onHeard;
 
   const activeRef = useRef(false);
   const startingRef = useRef(false);
@@ -135,6 +142,12 @@ export function useLocalSpeechInput(
   const speechChunksRef = useRef<Float32Array[]>([]);
   const ringBufferRef = useRef<Float32Array[]>([]);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const noiseFloorRef = useRef(0.004);
+  const calibratingRef = useRef(true);
+  const calibrateUntilRef = useRef(0);
+  const calibrateSamplesRef = useRef<number[]>([]);
+
+  const envThreshold = Number(process.env.NEXT_PUBLIC_VAD_THRESHOLD ?? 0);
 
   const setProcessingState = useCallback((value: boolean) => {
     processingRef.current = value;
@@ -155,6 +168,8 @@ export function useLocalSpeechInput(
     silenceStartRef.current = 0;
     speechChunksRef.current = [];
     ringBufferRef.current = [];
+    calibratingRef.current = true;
+    calibrateSamplesRef.current = [];
   }, []);
 
   const finalizeUtterance = useCallback(async () => {
@@ -163,12 +178,12 @@ export function useLocalSpeechInput(
     speechChunksRef.current = [];
     if (!ctx || !activeRef.current) return;
     if (chunks.length === 0) {
-      setError('No speech detected. Speak closer to the mic, then pause ~2 seconds.');
+      setError('No speech detected. Speak closer to the mic, then pause briefly.');
       return;
     }
 
     const total = chunks.reduce((n, c) => n + c.length, 0);
-    if (total < ctx.sampleRate * 0.2) {
+    if (total < ctx.sampleRate * MIN_UTTERANCE_S) {
       setError('Speech was too short. Say a full sentence, then pause.');
       return;
     }
@@ -180,11 +195,12 @@ export function useLocalSpeechInput(
       offset += chunk.length;
     }
 
-    merged = normalizeAudio(merged);
+    const normalized = normalizeAudio(merged);
+    onHeardRef.current?.();
     setProcessingState(true);
     setError(null);
     try {
-      const pcm16k = await resampleTo16k(merged, ctx.sampleRate);
+      const pcm16k = await resampleTo16k(normalized, ctx.sampleRate);
       const wav = encodeWav(pcm16k, 16_000);
       const text = await transcribeBlob(wav);
       if (text) {
@@ -192,7 +208,7 @@ export function useLocalSpeechInput(
         onFinalRef.current(text);
       } else {
         setError(
-          'Could not transcribe that. Speak clearly, a bit louder, then pause ~2 seconds.',
+          'Could not transcribe that. Speak clearly, a bit louder, then pause briefly.',
         );
       }
     } catch (err) {
@@ -225,7 +241,7 @@ export function useLocalSpeechInput(
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
-          noiseSuppression: false,
+          noiseSuppression: true,
           autoGainControl: true,
         },
       });
@@ -237,6 +253,10 @@ export function useLocalSpeechInput(
         await ctx.resume();
       }
 
+      calibratingRef.current = true;
+      calibrateUntilRef.current = performance.now() + 500;
+      calibrateSamplesRef.current = [];
+
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
@@ -245,7 +265,7 @@ export function useLocalSpeechInput(
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
       processor.onaudioprocess = (event) => {
-        if (!activeRef.current) return;
+        if (!activeRef.current || processingRef.current) return;
         const chunk = new Float32Array(event.inputBuffer.getChannelData(0));
         ringBufferRef.current.push(chunk);
         if (ringBufferRef.current.length > 40) ringBufferRef.current.shift();
@@ -273,16 +293,36 @@ export function useLocalSpeechInput(
         }
         const rms = Math.sqrt(sum / timeDomain.length);
         const now = performance.now();
-        const speechThreshold = 0.006;
-        const silenceMs = 2000;
 
-        if (rms > speechThreshold) {
-          if (!speakingRef.current) {
+        if (calibratingRef.current) {
+          calibrateSamplesRef.current.push(rms);
+          if (now >= calibrateUntilRef.current) {
+            const samples = calibrateSamplesRef.current;
+            const sorted = [...samples].sort((a, b) => a - b);
+            const median = sorted[Math.floor(sorted.length / 2)] ?? 0.004;
+            noiseFloorRef.current = Math.max(0.002, median);
+            calibratingRef.current = false;
+          }
+        }
+
+        if (processingRef.current) {
+          rafRef.current = requestAnimationFrame(tick);
+          return;
+        }
+
+        const floor = envThreshold > 0 ? envThreshold : noiseFloorRef.current;
+        const startThreshold = Math.max(0.008, floor * 3);
+        const continueThreshold = Math.max(0.006, floor * 2);
+        const threshold = speakingRef.current ? continueThreshold : startThreshold;
+        const silenceMs = DEFAULT_SILENCE_MS;
+
+        if (rms > threshold) {
+          if (!speakingRef.current && !calibratingRef.current) {
             speakingRef.current = true;
             speechChunksRef.current = ringBufferRef.current.slice(-8);
           }
           silenceStartRef.current = 0;
-        } else if (speakingRef.current && !processingRef.current) {
+        } else if (speakingRef.current) {
           if (!silenceStartRef.current) silenceStartRef.current = now;
           if (now - silenceStartRef.current >= silenceMs) {
             speakingRef.current = false;

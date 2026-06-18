@@ -30,6 +30,7 @@ import { createSocialModule } from '@bellasos/module-social';
 import { createAutomationModule } from '@bellasos/module-automation';
 import { createVoiceModule } from '@bellasos/module-voice';
 import { createCameraModule } from '@bellasos/module-camera';
+import { getIngestionService } from '@bellasos/core-ingestion';
 
 const log = createLogger({ lib: 'runtime' });
 
@@ -70,6 +71,8 @@ export class Platform {
         process.env.DATABASE_URL ??
         'postgres://bellasos:bellasos@localhost:5432/bellasos',
     });
+
+    getIngestionService();
 
     const events = await createEventBus({
       natsUrl: config.natsUrl ?? process.env.NATS_URL,

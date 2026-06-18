@@ -9,9 +9,10 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ok, type CallContext } from '@bellasos/contracts';
+import { getIngestionService } from '@bellasos/core-ingestion';
 import { PLATFORM, type Platform } from './platform.token';
 import type { AuthedRequest } from './auth.guard';
-import { transcribeWav } from './stt.service';
+import { transcribeWav, warmupTranscriber } from './stt.service';
 
 function callCtx(req: AuthedRequest): CallContext {
   return { principal: req.principal, traceId: req.traceId };
@@ -68,6 +69,30 @@ function parseRouterJson(text: string): RouterPlan | null {
   }
 }
 
+function fastChatReply(message: string): string | null {
+  const m = message.toLowerCase().trim();
+  if (/^(hi|hello|hey)\b/.test(m)) return "Hello. I'm here and listening.";
+  if (/can you hear me|do you hear me|are you there|you there|hear me/.test(m)) {
+    return 'Yes — I can hear you loud and clear.';
+  }
+  if (/^(thanks|thank you)\b/.test(m)) return "You're welcome.";
+  if (/^(test|testing)\b/.test(m)) return 'Test received. Voice and chat are working.';
+  return null;
+}
+
+function looksLikeFreshDataQuery(message: string): boolean {
+  return /\b(news|today|latest|current|price|market|what happened|who is|when did|recent)\b/i.test(
+    message,
+  );
+}
+
+function looksLikeSimpleChat(message: string): boolean {
+  if (message.length > 160) return false;
+  return !/\b(open|show|launch|run|research|portfolio|briefing|draft|post|analyze|schedule|enable|disable|module|agent|console|studio)\b/i.test(
+    message,
+  );
+}
+
 @Controller('jarvis')
 export class JarvisController {
   constructor(@Inject(PLATFORM) private readonly platform: Platform) {}
@@ -96,6 +121,13 @@ export class JarvisController {
     }
   }
 
+  /** Kick off Whisper model load before the first utterance finishes. */
+  @Post('warmup-stt')
+  warmupStt(@Req() req: AuthedRequest) {
+    warmupTranscriber();
+    return ok({ status: 'warming' }, req.traceId);
+  }
+
   @Post('chat')
   async chat(
     @Req() req: AuthedRequest,
@@ -104,6 +136,81 @@ export class JarvisController {
     const message = body.message?.trim();
     if (!message) {
       return ok({ reply: 'Say something and I will help.', state: 'completed' }, req.traceId);
+    }
+
+    const instant = fastChatReply(message);
+    if (instant) {
+      return ok({ reply: instant, state: 'completed' }, req.traceId);
+    }
+
+    const lower = message.toLowerCase();
+    if (lower.includes('open ') || lower.startsWith('show ')) {
+      for (const [key, appId] of Object.entries(MODULE_APPS)) {
+        if (lower.includes(key)) {
+          return ok(
+            {
+              reply: `Opening ${key}.`,
+              state: 'completed',
+              openApp: appId,
+              routedTo: { kind: 'module', id: appId },
+            },
+            req.traceId,
+          );
+        }
+      }
+    }
+
+    if (looksLikeSimpleChat(message)) {
+      try {
+        let contextBlock = '';
+        let dataAsOf = new Date().toISOString();
+        let sources: Array<{ url?: string; title: string; fetchedAt: string }> = [];
+        if (looksLikeFreshDataQuery(message)) {
+          const ingestion = getIngestionService();
+          const ctx = await ingestion.getContextForQuery(message, ['jarvis']);
+          contextBlock = ctx.promptBlock;
+          dataAsOf = ctx.fetchedAt;
+          sources = ctx.sources;
+        }
+        const chat = await this.platform.ai.complete({
+          taskType: 'general',
+          traceId: req.traceId,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are Jarvis, the BellasOS voice assistant. Reply in one or two short spoken sentences.' +
+                (contextBlock
+                  ? ' Ground answers in the live sources provided. Cite if relevant.'
+                  : ''),
+            },
+            {
+              role: 'user',
+              content: contextBlock
+                ? `${message}\n\nLive sources (as of ${dataAsOf}):\n${contextBlock}`
+                : message,
+            },
+          ],
+        });
+        const prefix =
+          sources.length > 0
+            ? `Based on ${sources.length} live source(s) (${new Date(dataAsOf).toLocaleDateString()}): `
+            : '';
+        return ok(
+          {
+            reply: `${prefix}${chat.text}`,
+            state: 'completed',
+            dataAsOf,
+            sources,
+          },
+          req.traceId,
+        );
+      } catch (err) {
+        return ok(
+          { reply: `Error: ${(err as Error).message}`, state: 'error' },
+          req.traceId,
+        );
+      }
     }
 
     const agents = this.platform.orchestrator.listAgents();
@@ -142,18 +249,6 @@ User: ${message}`;
       plan = parseRouterJson(routed.text) ?? { intent: 'chat', reply: routed.text };
     } catch {
       plan = { intent: 'chat', reply: 'I had trouble routing that request. Try again in a moment.' };
-    }
-
-    const lower = message.toLowerCase();
-    if (lower.includes('open ') || lower.startsWith('show ')) {
-      for (const [key, appId] of Object.entries(MODULE_APPS)) {
-        if (lower.includes(key)) {
-          plan.intent = 'open_app';
-          plan.openApp = appId;
-          plan.reply = plan.reply || `Opening ${key}.`;
-          break;
-        }
-      }
     }
 
     if (plan.intent === 'open_app' && plan.openApp) {

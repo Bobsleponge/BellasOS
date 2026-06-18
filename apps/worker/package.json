@@ -13,6 +13,7 @@
     "@bellasos/contracts": "*",
     "@bellasos/observability": "*",
     "@bellasos/runtime": "*",
+    "@bellasos/core-ingestion": "*",
     "dotenv": "^16.4.7"
   },
   "nx": {

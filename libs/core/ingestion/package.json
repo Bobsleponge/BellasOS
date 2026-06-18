@@ -1,5 +1,5 @@
 {
-  "name": "@bellasos/module-research",
+  "name": "@bellasos/core-ingestion",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "@bellasos/contracts": "*",
-    "@bellasos/core-ingestion": "*",
-    "zod": "^3.24.1"
+    "@bellasos/db": "*",
+    "@bellasos/observability": "*"
   },
   "nx": {
-    "tags": ["scope:module"]
+    "tags": ["scope:core"]
   }
 }

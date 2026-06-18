@@ -135,6 +135,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ message, sessionId }),
     }),
+  jarvisWarmupStt: () =>
+    request<{ status: string }>('/jarvis/warmup-stt', { method: 'POST' }),
 };
 
 export interface Health {
@@ -268,4 +270,6 @@ export interface JarvisChatResponse {
   routedTo?: { kind: 'agent' | 'module'; id: string };
   openApp?: string;
   action?: { moduleId: string; action: string; input?: unknown };
+  dataAsOf?: string;
+  sources?: Array<{ url?: string; title: string; fetchedAt: string }>;
 }

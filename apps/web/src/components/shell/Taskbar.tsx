@@ -16,7 +16,8 @@ export function Taskbar() {
   const setGestureEnabled = useShellStore((s) => s.setGestureEnabled);
   const windows = useShellStore((s) => s.windows);
   const focusWindow = useShellStore((s) => s.focusWindow);
-  const { voiceSessionActive, toggleVoiceSession, supported } = useVoiceSession();
+  const micListening = useShellStore((s) => s.micListening);
+  const { toggleMicListening, supported } = useVoiceSession();
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.health });
 
   useEffect(() => {
@@ -57,15 +58,13 @@ export function Taskbar() {
 
       <div className="flex items-center gap-3">
         <Button
-          variant={voiceSessionActive ? 'default' : 'ghost'}
+          variant={micListening ? 'default' : 'ghost'}
           size="sm"
-          onClick={toggleVoiceSession}
-          disabled={!supported}
-          title={
-            voiceSessionActive ? 'Stop voice session' : 'Start voice session'
-          }
+          onClick={toggleMicListening}
+          disabled={!supported || eqState === 'transcribing' || eqState === 'thinking'}
+          title={micListening ? 'Stop listening' : 'Start listening'}
         >
-          {voiceSessionActive ? (
+          {micListening ? (
             <Mic className="w-4 h-4 mr-1" />
           ) : (
             <MicOff className="w-4 h-4 mr-1" />

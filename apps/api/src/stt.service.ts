@@ -21,9 +21,10 @@ async function getTranscriber(): Promise<WhisperPipeline> {
       if (process.env.TRANSFORMERS_CACHE) {
         env.cacheDir = process.env.TRANSFORMERS_CACHE;
       }
+      const modelId = process.env.STT_MODEL ?? 'Xenova/whisper-base.en';
       return createPipeline(
         'automatic-speech-recognition',
-        'Xenova/whisper-tiny.en',
+        modelId,
       ) as Promise<WhisperPipeline>;
     })().catch((err) => {
       transcriberPromise = null;
@@ -31,6 +32,13 @@ async function getTranscriber(): Promise<WhisperPipeline> {
     });
   }
   return transcriberPromise;
+}
+
+/** Load Whisper in the background so the first voice utterance is not blocked. */
+export function warmupTranscriber(): void {
+  void getTranscriber().catch((err) => {
+    log.warn('STT warmup failed', { error: (err as Error).message });
+  });
 }
 
 function decodeWavPcm16(buffer: Buffer): { samples: Float32Array; sampleRate: number } {

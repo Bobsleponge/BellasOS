@@ -18,6 +18,7 @@
     "@bellasos/core-audit": "*",
     "@bellasos/core-notifications": "*",
     "@bellasos/core-registry": "*",
+    "@bellasos/core-ingestion": "*",
     "@bellasos/ai-gateway": "*",
     "@bellasos/memory": "*",
     "@bellasos/agents-framework": "*",

@@ -8,7 +8,10 @@ type SpeechCtor = new () => {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
-  onresult: (e: { results: Array<Array<{ transcript: string }>> }) => void;
+  onresult: (e: {
+    resultIndex: number;
+    results: Array<{ isFinal: boolean; 0: { transcript: string } }>;
+  }) => void;
   onerror: (e: SpeechErrorEvent) => void;
   onend: () => void;
   start: () => void;
@@ -41,14 +44,29 @@ function mapSpeechError(code: string | undefined): string | null {
   }
 }
 
-export function useSpeechInput(onFinal: (text: string) => void) {
+export interface SpeechInputOptions {
+  /** Keep listening across utterances (voice session mode). */
+  sessionActive?: boolean;
+}
+
+export function useSpeechInput(
+  onFinal: (text: string) => void,
+  options?: SpeechInputOptions,
+) {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recRef = useRef<InstanceType<SpeechCtor> | null>(null);
   const onFinalRef = useRef(onFinal);
+  const sessionActiveRef = useRef(options?.sessionActive ?? false);
+  const restartTimerRef = useRef<number | null>(null);
   onFinalRef.current = onFinal;
+  sessionActiveRef.current = options?.sessionActive ?? false;
 
   const stop = useCallback(() => {
+    if (restartTimerRef.current) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     const rec = recRef.current;
     recRef.current = null;
     if (!rec) {
@@ -79,11 +97,16 @@ export function useSpeechInput(onFinal: (text: string) => void) {
     try {
       const rec = new SR();
       rec.lang = 'en-US';
-      rec.continuous = false;
+      rec.continuous = sessionActiveRef.current;
       rec.interimResults = false;
       rec.onresult = (e) => {
-        const text = e.results[0]?.[0]?.transcript?.trim();
-        if (text) onFinalRef.current(text);
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const result = e.results[i];
+          if (result?.isFinal) {
+            const text = result[0]?.transcript?.trim();
+            if (text) onFinalRef.current(text);
+          }
+        }
       };
       rec.onerror = (e) => {
         const msg = mapSpeechError(e.error);
@@ -94,6 +117,12 @@ export function useSpeechInput(onFinal: (text: string) => void) {
       rec.onend = () => {
         setListening(false);
         if (recRef.current === rec) recRef.current = null;
+        if (sessionActiveRef.current) {
+          restartTimerRef.current = window.setTimeout(() => {
+            restartTimerRef.current = null;
+            if (sessionActiveRef.current) start();
+          }, 120);
+        }
       };
       recRef.current = rec;
       rec.start();

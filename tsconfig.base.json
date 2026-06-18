@@ -29,6 +29,7 @@
       "@bellasos/core-config": ["libs/core/config/src/index.ts"],
       "@bellasos/core-audit": ["libs/core/audit/src/index.ts"],
       "@bellasos/core-notifications": ["libs/core/notifications/src/index.ts"],
+      "@bellasos/core-ingestion": ["libs/core/ingestion/src/index.ts"],
       "@bellasos/ai-gateway": ["libs/ai/gateway/src/index.ts"],
       "@bellasos/ai-providers": ["libs/ai/providers/src/index.ts"],
       "@bellasos/ai-routing": ["libs/ai/routing/src/index.ts"],

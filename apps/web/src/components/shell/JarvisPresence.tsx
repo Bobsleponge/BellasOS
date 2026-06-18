@@ -11,46 +11,68 @@ import { useShellStore } from '@/stores/shellStore';
 const STATUS_LABEL: Record<string, string> = {
   idle: 'Voice off',
   listening: 'Listening…',
-  processing: 'Processing speech…',
-  thinking: 'Thinking…',
-  speaking: 'Speaking…',
+  heard: 'Heard you',
+  transcribing: 'Transcribing…',
+  thinking: 'Jarvis is thinking…',
+  speaking: 'Jarvis is speaking…',
+};
+
+const STATUS_VARIANT: Record<string, 'default' | 'success' | 'muted'> = {
+  idle: 'muted',
+  listening: 'success',
+  heard: 'default',
+  transcribing: 'default',
+  thinking: 'default',
+  speaking: 'default',
 };
 
 export function JarvisPresence() {
   const transcript = useShellStore((s) => s.transcript);
   const eqState = useShellStore((s) => s.eqState);
+  const heardCaption = useShellStore((s) => s.heardCaption);
   const {
-    voiceSessionActive,
+    micListening,
     listening,
     processing,
     supported,
     speechError,
     mode,
-    toggleVoiceSession,
+    toggleMicListening,
   } = useVoiceSession();
   const { sendMessage } = useJarvisSession();
   const [text, setText] = useState('');
 
   const submitText = () => {
-    if (!text.trim() || eqState === 'thinking') return;
+    if (!text.trim() || eqState === 'thinking' || eqState === 'speaking') return;
     sendMessage(text);
     setText('');
   };
 
   const lastLines = transcript.slice(-4);
-  const statusText = voiceSessionActive
+  const statusText = micListening
     ? STATUS_LABEL[eqState] ?? 'Voice on'
-    : 'Click mic to start voice';
+    : eqState === 'thinking' || eqState === 'speaking' || eqState === 'transcribing'
+      ? STATUS_LABEL[eqState] ?? eqState
+      : 'Mic off — click to talk';
 
   return (
     <div className="flex flex-col items-center gap-4 w-full max-w-2xl mx-auto px-4">
-      <div className="flex items-center gap-2">
-        <Badge variant={voiceSessionActive ? 'success' : 'muted'}>{statusText}</Badge>
-        {listening && voiceSessionActive && !processing && (
-          <span className="text-xs text-accent animate-pulse">Mic live</span>
+      <div className="flex flex-col items-center gap-1">
+        <Badge variant={STATUS_VARIANT[eqState] ?? 'muted'}>{statusText}</Badge>
+        {micListening && listening && !processing && eqState === 'listening' && (
+          <span className="text-xs text-accent animate-pulse">Mic live — speak now</span>
         )}
-        {processing && (
-          <span className="text-xs text-amber-300 animate-pulse">Transcribing…</span>
+        {heardCaption && (
+          <span className="text-xs text-amber-200">{heardCaption}</span>
+        )}
+        {eqState === 'transcribing' && (
+          <span className="text-xs text-amber-300 animate-pulse">Transcribing your speech…</span>
+        )}
+        {eqState === 'thinking' && (
+          <span className="text-xs text-sky-300 animate-pulse">Jarvis is thinking…</span>
+        )}
+        {eqState === 'speaking' && (
+          <span className="text-xs text-violet-300">Jarvis is speaking — mic paused</span>
         )}
       </div>
 
@@ -71,19 +93,19 @@ export function JarvisPresence() {
 
       <div className="flex items-center gap-2">
         <Button
-          variant={voiceSessionActive ? 'default' : 'glass'}
+          variant={micListening ? 'default' : 'glass'}
           size="icon"
-          onClick={toggleVoiceSession}
-          disabled={!supported || eqState === 'thinking' || eqState === 'processing'}
+          onClick={toggleMicListening}
+          disabled={!supported || eqState === 'transcribing' || eqState === 'thinking'}
           title={
-            voiceSessionActive
-              ? 'Stop voice session'
-              : 'Start voice session (listens until you stop)'
+            micListening
+              ? 'Stop listening (Jarvis keeps responding if busy)'
+              : 'Start listening'
           }
-          aria-pressed={voiceSessionActive}
-          className={voiceSessionActive ? 'ring-2 ring-accent' : ''}
+          aria-pressed={micListening}
+          className={micListening ? 'ring-2 ring-accent' : ''}
         >
-          {voiceSessionActive ? (
+          {micListening ? (
             <Mic className="w-5 h-5" />
           ) : (
             <MicOff className="w-5 h-5" />
@@ -98,7 +120,7 @@ export function JarvisPresence() {
         />
         <Button
           onClick={submitText}
-          disabled={eqState === 'thinking' || !text.trim()}
+          disabled={eqState === 'thinking' || eqState === 'speaking' || !text.trim()}
           size="icon"
           variant="default"
         >
@@ -114,9 +136,9 @@ export function JarvisPresence() {
       {speechError && (
         <p className="text-xs text-red-400 max-w-md text-center">{speechError}</p>
       )}
-      {voiceSessionActive && (
+      {micListening && (
         <p className="text-xs text-muted">
-          Speak a full sentence, then pause ~2 seconds. Mode: {mode === 'browser' ? 'browser speech' : 'local Whisper'}.
+          Speak naturally, then pause ~1 second. Mode: local Whisper ({mode}).
         </p>
       )}
     </div>

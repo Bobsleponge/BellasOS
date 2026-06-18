@@ -5,13 +5,14 @@ import { PLATFORM } from './platform.token';
 import { AuthGuard } from './auth.guard';
 import { BellasExceptionFilter } from './http';
 import { CONTROLLERS, JarvisController, PLATFORM_CONTROLLERS } from './controllers';
+import { IngestionController } from './ingestion.controller';
 
 @Module({})
 export class AppModule {
   static forRoot(platform: Platform): DynamicModule {
     return {
       module: AppModule,
-      controllers: [...CONTROLLERS, JarvisController, ...PLATFORM_CONTROLLERS],
+      controllers: [...CONTROLLERS, JarvisController, IngestionController, ...PLATFORM_CONTROLLERS],
       providers: [
         { provide: PLATFORM, useValue: platform },
         { provide: APP_GUARD, useClass: AuthGuard },

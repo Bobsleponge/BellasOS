@@ -3,28 +3,31 @@
 import { createContext, useCallback, useContext, useEffect, type ReactNode } from 'react';
 import { useJarvisSession } from '@/hooks/useJarvisSession';
 import { useHybridSpeechInput } from '@/hooks/useHybridSpeechInput';
-import { useShellStore } from '@/stores/shellStore';
+import { canAcceptSpeechInput, useShellStore } from '@/stores/shellStore';
+import { api } from '@/lib/api';
 
 interface VoiceSessionContextValue {
   voiceSessionActive: boolean;
+  micListening: boolean;
   listening: boolean;
   processing: boolean;
   mode: string;
   supported: boolean;
   eqState: string;
   speechError: string | null;
-  toggleVoiceSession: () => void;
-  startVoiceSession: () => Promise<void>;
-  stopVoiceSession: () => void;
+  toggleMicListening: () => void;
 }
 
 const VoiceSessionContext = createContext<VoiceSessionContextValue | null>(null);
 
 function VoiceSessionController({ children }: { children: ReactNode }) {
   const voiceSessionActive = useShellStore((s) => s.voiceSessionActive);
-  const setVoiceSessionActive = useShellStore((s) => s.setVoiceSessionActive);
+  const micListening = useShellStore((s) => s.micListening);
   const eqState = useShellStore((s) => s.eqState);
+  const setVoiceSessionActive = useShellStore((s) => s.setVoiceSessionActive);
+  const setMicListening = useShellStore((s) => s.setMicListening);
   const setEqState = useShellStore((s) => s.setEqState);
+  const setHeardCaption = useShellStore((s) => s.setHeardCaption);
   const speechError = useShellStore((s) => s.speechError);
   const setSpeechError = useShellStore((s) => s.setSpeechError);
   const { sendMessage } = useJarvisSession();
@@ -32,48 +35,45 @@ function VoiceSessionController({ children }: { children: ReactNode }) {
   const onSpeech = useCallback(
     (spoken: string) => {
       setSpeechError(null);
-      sendMessage(spoken);
+      sendMessage(spoken, 'voice');
     },
     [sendMessage, setSpeechError],
   );
 
+  const onHeard = useCallback(() => {
+    setHeardCaption('Got it — transcribing your speech…');
+    setEqState('heard');
+  }, [setEqState, setHeardCaption]);
+
   const onProcessing = useCallback(
     (active: boolean) => {
-      if (active) setEqState('processing');
-      else if (useShellStore.getState().voiceSessionActive) setEqState('listening');
+      if (active) setEqState('transcribing');
+      else if (useShellStore.getState().micListening) {
+        setEqState('listening');
+        setHeardCaption(null);
+      }
     },
-    [setEqState],
+    [setEqState, setHeardCaption],
   );
 
-  const { listening, processing, start, stop, supported, error, clearError, mode } =
-    useHybridSpeechInput(onSpeech, onProcessing);
+  const canCapture = micListening && canAcceptSpeechInput(eqState);
 
-  const shouldListen =
-    voiceSessionActive &&
-    (eqState === 'listening' || eqState === 'idle' || eqState === 'processing');
+  const { listening, processing, start, stop, supported, error, clearError, mode } =
+    useHybridSpeechInput(onSpeech, onProcessing, onHeard, canCapture);
+
+  const shouldCapture = canCapture && !processing;
 
   useEffect(() => {
     if (!supported) return;
     if (error && /denied|not available|not supported|blocked/i.test(error)) return;
-    if (shouldListen && !listening && !processing) {
-      if (eqState === 'idle') setEqState('listening');
+    if (shouldCapture && !listening && !processing) {
       void start();
       return;
     }
-    if (!shouldListen && listening && !processing) {
+    if (!shouldCapture && listening && !processing) {
       stop();
     }
-  }, [
-    shouldListen,
-    listening,
-    processing,
-    supported,
-    start,
-    stop,
-    eqState,
-    setEqState,
-    error,
-  ]);
+  }, [shouldCapture, listening, processing, supported, start, stop, error]);
 
   useEffect(() => {
     if (error) setSpeechError(error);
@@ -81,54 +81,61 @@ function VoiceSessionController({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!error) return;
-    const fatal =
-      /denied|not supported|blocked|service-not-allowed/i.test(error);
+    const fatal = /denied|not supported|blocked|service-not-allowed/i.test(error);
     if (fatal) {
+      setMicListening(false);
       setVoiceSessionActive(false);
-      setEqState('idle');
+      if (eqState === 'listening') setEqState('idle');
       stop();
     }
-  }, [error, setVoiceSessionActive, setEqState, stop]);
+  }, [error, setVoiceSessionActive, setMicListening, setEqState, stop, eqState]);
 
-  const startVoiceSession = useCallback(async () => {
+  const toggleMicListening = useCallback(() => {
     clearError();
-    setSpeechError(null);
     if (!supported) {
       setSpeechError(
         'Local speech is not supported in this browser. Use Chrome or Edge, or type instead.',
       );
       return;
     }
-    setVoiceSessionActive(true);
-    setEqState('listening');
-  }, [clearError, setSpeechError, setVoiceSessionActive, setEqState, supported]);
 
-  const stopVoiceSession = useCallback(() => {
-    setVoiceSessionActive(false);
-    setEqState('idle');
+    if (!micListening) {
+      setSpeechError(null);
+      setVoiceSessionActive(true);
+      if (eqState === 'idle') setEqState('listening');
+      if (canAcceptSpeechInput(useShellStore.getState().eqState)) {
+        setMicListening(true);
+        void api.jarvisWarmupStt().catch(() => {});
+      }
+      return;
+    }
+
+    setMicListening(false);
     stop();
-    setSpeechError(null);
-    clearError();
-  }, [setVoiceSessionActive, setEqState, stop, setSpeechError, clearError]);
-
-  const toggleVoiceSession = useCallback(() => {
-    if (voiceSessionActive) stopVoiceSession();
-    else void startVoiceSession();
-  }, [voiceSessionActive, stopVoiceSession, startVoiceSession]);
+  }, [
+    clearError,
+    micListening,
+    supported,
+    setSpeechError,
+    setVoiceSessionActive,
+    setMicListening,
+    setEqState,
+    eqState,
+    stop,
+  ]);
 
   return (
     <VoiceSessionContext.Provider
       value={{
         voiceSessionActive,
+        micListening,
         listening,
         processing,
         mode,
         supported,
         eqState,
         speechError,
-        toggleVoiceSession,
-        startVoiceSession,
-        stopVoiceSession,
+        toggleMicListening,
       }}
     >
       {children}

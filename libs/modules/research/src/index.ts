@@ -7,6 +7,7 @@ import {
   type ModuleManifest,
   type ModuleRuntime,
 } from '@bellasos/contracts';
+import { getIngestionService } from '@bellasos/core-ingestion';
 
 const runInput = z.object({
   subject: z.string().min(1),
@@ -84,6 +85,11 @@ export function createResearchModule(): ModuleRuntime {
       switch (action) {
         case 'run': {
           const { subject, kind } = runInput.parse(input);
+          const ingestion = getIngestionService();
+          const { promptBlock, sources, fetchedAt } = await ingestion.getContextForQuery(
+            `${kind} ${subject}`,
+            ['research', kind, subject.toLowerCase()],
+          );
           const completion = await ctx.ai.complete({
             taskType: 'research',
             traceId: call.traceId,
@@ -91,10 +97,14 @@ export function createResearchModule(): ModuleRuntime {
               {
                 role: 'system',
                 content:
-                  'You are a research analyst. Produce a structured report: ' +
-                  'Overview, Key Facts, Risks, Opportunities, Investment Thesis.',
+                  'You are a research analyst. Use ONLY the provided live sources below. ' +
+                  'Produce: Overview, Key Facts, Risks, Opportunities, Investment Thesis. ' +
+                  'Cite source titles/URLs inline. If sources are thin, say so explicitly.',
               },
-              { role: 'user', content: `Research the ${kind}: ${subject}` },
+              {
+                role: 'user',
+                content: `Research the ${kind}: ${subject}\n\nLive sources (as of ${fetchedAt}):\n${promptBlock}`,
+              },
             ],
           });
           const report = {
@@ -102,6 +112,8 @@ export function createResearchModule(): ModuleRuntime {
             subject,
             kind,
             content: completion.text,
+            sources,
+            dataAsOf: fetchedAt,
             createdAt: new Date().toISOString(),
           };
           await ctx.memory.remember({

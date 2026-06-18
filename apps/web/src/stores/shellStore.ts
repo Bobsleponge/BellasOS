@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 
-export type EqState = 'idle' | 'listening' | 'processing' | 'thinking' | 'speaking';
+export type EqState =
+  | 'idle'
+  | 'listening'
+  | 'heard'
+  | 'transcribing'
+  | 'thinking'
+  | 'speaking';
 
 export interface ShellWindow {
   id: string;
@@ -16,8 +22,11 @@ export interface ShellWindow {
 
 interface ShellState {
   eqState: EqState;
-  /** User-enabled voice session: listen in turns until turned off. */
+  /** Voice conversation mode is engaged (Jarvis may still think/speak when mic is off). */
   voiceSessionActive: boolean;
+  /** Mic is actively capturing user speech. */
+  micListening: boolean;
+  heardCaption: string | null;
   speechError: string | null;
   gestureEnabled: boolean;
   windows: ShellWindow[];
@@ -25,6 +34,8 @@ interface ShellState {
   transcript: Array<{ role: 'user' | 'jarvis'; text: string }>;
   setEqState: (state: EqState) => void;
   setVoiceSessionActive: (active: boolean) => void;
+  setMicListening: (listening: boolean) => void;
+  setHeardCaption: (caption: string | null) => void;
   setSpeechError: (error: string | null) => void;
   setGestureEnabled: (enabled: boolean) => void;
   openApp: (appId: string, title: string) => void;
@@ -37,9 +48,15 @@ interface ShellState {
 
 let zCounter = 10;
 
+export function canAcceptSpeechInput(eqState: EqState): boolean {
+  return eqState === 'listening';
+}
+
 export const useShellStore = create<ShellState>((set, get) => ({
   eqState: 'idle',
   voiceSessionActive: false,
+  micListening: false,
+  heardCaption: null,
   speechError: null,
   gestureEnabled: false,
   windows: [],
@@ -47,6 +64,8 @@ export const useShellStore = create<ShellState>((set, get) => ({
   transcript: [{ role: 'jarvis', text: 'BellasOS online. Click the mic to start voice.' }],
   setEqState: (eqState) => set({ eqState }),
   setVoiceSessionActive: (voiceSessionActive) => set({ voiceSessionActive }),
+  setMicListening: (micListening) => set({ micListening }),
+  setHeardCaption: (heardCaption) => set({ heardCaption }),
   setSpeechError: (speechError) => set({ speechError }),
   setGestureEnabled: (gestureEnabled) => set({ gestureEnabled }),
   openApp: (appId, title) => {

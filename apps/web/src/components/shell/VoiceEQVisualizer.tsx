@@ -10,9 +10,8 @@ const ROWS = 20;
 export function VoiceEQVisualizer() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const eqState = useShellStore((s) => s.eqState);
-  const voiceSessionActive = useShellStore((s) => s.voiceSessionActive);
-  const micLive =
-    voiceSessionActive && (eqState === 'listening' || eqState === 'idle');
+  const micListening = useShellStore((s) => s.micListening);
+  const micLive = micListening && eqState === 'listening';
   const levels = useAudioAnalyser(micLive);
   const idlePhase = useIdlePulse(eqState !== 'idle' && eqState !== 'listening');
   const [tick, setTick] = useState(0);
@@ -52,11 +51,11 @@ export function VoiceEQVisualizer() {
         const y = gap + row * (dotH + gap);
         let intensity = 0.08;
 
-        if (eqState === 'listening' || micLive) {
+        if (micLive) {
           const bar = levels[col] ?? 0;
           const threshold = 1 - row / ROWS;
           intensity = bar > threshold ? Math.min(1, bar * 1.4) : 0.06;
-        } else if (eqState === 'processing') {
+        } else if (eqState === 'heard' || eqState === 'transcribing') {
           const wave = Math.sin(t * 4 + col * 0.35 + row * 0.2) * 0.5 + 0.5;
           intensity = 0.2 + wave * 0.6;
         } else if (eqState === 'thinking') {

@@ -1,10 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from '@/lib/api';
 import { useLocalSpeechInput } from './useLocalSpeechInput';
-import { useSpeechInput } from './useSpeechInput';
 
-export type SpeechMode = 'browser' | 'local';
+export type SpeechMode = 'local';
 
 export interface HybridSpeechInput {
   listening: boolean;
@@ -17,62 +17,41 @@ export interface HybridSpeechInput {
   clearError: () => void;
 }
 
-/**
- * Prefer browser speech (fast, accurate) when online; fall back to local Whisper
- * when the browser reports a network/service error.
- */
+/** Local Whisper STT (offline/private). Browser speech disabled per product preference. */
 export function useHybridSpeechInput(
   onFinal: (text: string) => void,
   onProcessing?: (active: boolean) => void,
+  onHeard?: () => void,
+  canCapture = false,
 ): HybridSpeechInput {
-  const [mode, setMode] = useState<SpeechMode>('browser');
-  const modeRef = useRef<SpeechMode>('browser');
-  const onFinalRef = useRef(onFinal);
-  onFinalRef.current = onFinal;
+  const canCaptureRef = useRef(canCapture);
+  canCaptureRef.current = canCapture;
 
-  const onBrowserFinal = useCallback((text: string) => {
-    onFinalRef.current(text);
-  }, []);
-
-  const browser = useSpeechInput(onBrowserFinal);
-  const local = useLocalSpeechInput(onFinal, onProcessing);
+  const local = useLocalSpeechInput(onFinal, onProcessing, onHeard);
 
   useEffect(() => {
-    if (!browser.error) return;
-    if (/network|service-not-allowed/i.test(browser.error)) {
-      setMode('local');
-      modeRef.current = 'local';
-      browser.clearError();
+    if (canCapture) {
+      void api.jarvisWarmupStt().catch(() => {});
     }
-  }, [browser.error, browser]);
-
-  useEffect(() => {
-    modeRef.current = mode;
-  }, [mode]);
+  }, [canCapture]);
 
   const start = useCallback(async () => {
-    if (modeRef.current === 'browser' && browser.supported) {
-      browser.start();
-      return;
-    }
+    if (!canCaptureRef.current) return;
     await local.start();
-  }, [browser, local]);
+  }, [local]);
 
   const stop = useCallback(() => {
-    browser.stop();
     local.stop();
-  }, [browser, local]);
-
-  const active = mode === 'browser' && browser.supported ? browser : local;
+  }, [local]);
 
   return {
-    listening: active.listening,
-    processing: 'processing' in active ? active.processing : false,
-    mode,
+    listening: local.listening,
+    processing: local.processing,
+    mode: 'local',
     start,
     stop,
-    supported: browser.supported || local.supported,
-    error: active.error,
-    clearError: active.clearError,
+    supported: local.supported,
+    error: local.error,
+    clearError: local.clearError,
   };
 }

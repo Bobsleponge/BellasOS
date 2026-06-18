@@ -64,6 +64,26 @@ function ListWidget({
   );
 }
 
+function SourceFooter({ item }: { item: { dataAsOf?: string; sources?: Array<{ title?: string; url?: string }> } }) {
+  if (!item.dataAsOf && !item.sources?.length) return null;
+  return (
+    <div className="text-[10px] text-muted mt-1 space-y-0.5">
+      {item.dataAsOf && <div>Data as of {new Date(item.dataAsOf).toLocaleString()}</div>}
+      {item.sources?.slice(0, 2).map((s, i) => (
+        <div key={i} className="truncate">
+          {s.url ? (
+            <a href={s.url} target="_blank" rel="noreferrer" className="text-accent2 hover:underline">
+              {s.title ?? s.url}
+            </a>
+          ) : (
+            s.title
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ResearchWidget({ spec }: { spec: WidgetSpec }) {
   return (
     <ListWidget
@@ -73,6 +93,7 @@ function ResearchWidget({ spec }: { spec: WidgetSpec }) {
         <div>
           <div className="text-white">{r.subject}</div>
           <div className="text-xs text-muted line-clamp-2">{r.content}</div>
+          <SourceFooter item={r} />
         </div>
       )}
     />
@@ -88,6 +109,7 @@ function IntelligenceWidget({ spec }: { spec: WidgetSpec }) {
         <div>
           <div className="text-white capitalize">{b.cadence} briefing</div>
           <div className="text-xs text-muted line-clamp-3">{b.content}</div>
+          <SourceFooter item={b} />
         </div>
       )}
     />

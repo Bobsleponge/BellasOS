@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@bellasos/contracts": "*",
+    "@bellasos/core-ingestion": "*",
     "zod": "^3.24.1"
   },
   "nx": {

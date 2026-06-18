@@ -7,6 +7,7 @@ import {
   type ModuleManifest,
   type ModuleRuntime,
 } from '@bellasos/contracts';
+import { getIngestionService } from '@bellasos/core-ingestion';
 
 const ACCOUNTS = ['Trust', 'Personal', 'TFSA', 'Crypto', 'Property'] as const;
 
@@ -82,6 +83,11 @@ const manifest: ModuleManifest = {
       name: 'analyze',
       description: 'AI analysis of allocation and risk',
       permission: 'portfolio.read',
+    },
+    {
+      name: 'prices.refresh',
+      description: 'Refresh market prices for held symbols',
+      permission: 'portfolio.manage',
     },
   ],
   events: [
@@ -202,6 +208,17 @@ export function createPortfolioModule(): ModuleRuntime {
         case 'analyze': {
           const holdings = await loadHoldings();
           const base = await currency();
+          const symbols = holdings.map((h) => h.symbol);
+          const ingestion = getIngestionService();
+          const priceDocs = await ingestion.refreshPrices(symbols);
+          const newsDocs = await ingestion.pollSectorNews(
+            symbols.slice(0, 5).map((s) => `${s} stock`),
+          );
+          const { promptBlock, sources, fetchedAt } = await ingestion.getContextForQuery(
+            `portfolio ${symbols.join(' ')}`,
+            ['portfolio'],
+          );
+          const priceLines = priceDocs.map((d) => d.snippet).join('\n');
           const res = await ctx.ai.complete({
             taskType: 'reasoning',
             traceId: call.traceId,
@@ -210,12 +227,45 @@ export function createPortfolioModule(): ModuleRuntime {
                 role: 'system',
                 content:
                   `You are a portfolio risk analyst. Base currency: ${base}. ` +
-                  'Comment on allocation, concentration and risk. Be concise and actionable.',
+                  'Use live market/news sources below. Comment on allocation, concentration and risk.',
               },
-              { role: 'user', content: JSON.stringify(holdings) },
+              {
+                role: 'user',
+                content:
+                  `Holdings:\n${JSON.stringify(holdings)}\n\n` +
+                  `Live prices (as of ${fetchedAt}):\n${priceLines || 'No price feed'}\n\n` +
+                  `News/context:\n${promptBlock}`,
+              },
             ],
           });
-          return { analysis: res.text, baseCurrency: base };
+          return {
+            analysis: res.text,
+            baseCurrency: base,
+            sources,
+            dataAsOf: fetchedAt,
+            pricesUpdated: priceDocs.length,
+            newsItems: newsDocs.length,
+          };
+        }
+        case 'prices.refresh': {
+          const holdings = await loadHoldings();
+          const symbols = holdings.map((h) => h.symbol);
+          const ingestion = getIngestionService();
+          const docs = await ingestion.refreshPrices(symbols);
+          for (const doc of docs) {
+            const sym = String(doc.metadata.symbol ?? '');
+            const price = Number(doc.metadata.price);
+            if (!sym || !price) continue;
+            const existing = holdings.find((h) => h.symbol.toUpperCase() === sym);
+            if (existing) {
+              await ctx.storage.set(`holding:${existing.id}`, {
+                ...existing,
+                price,
+                updatedAt: new Date().toISOString(),
+              });
+            }
+          }
+          return { updated: docs.length, symbols: docs.map((d) => d.metadata.symbol) };
         }
         default:
           throw new Error(`Unknown action ${action}`);

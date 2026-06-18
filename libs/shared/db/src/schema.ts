@@ -201,6 +201,19 @@ export interface ModuleKvTable {
   value: Record<string, unknown> | null;
 }
 
+export interface CoreIngestDocumentsTable {
+  id: string;
+  source: string;
+  title: string;
+  url: string | null;
+  snippet: string;
+  body: string | null;
+  tags: string[];
+  metadata: Record<string, unknown> | null;
+  fetched_at: string;
+  expires_at: string | null;
+}
+
 export interface Database {
   'core.users': CoreUsersTable;
   'core.roles': CoreRolesTable;
@@ -214,6 +227,7 @@ export interface Database {
   'core.approvals': CoreApprovalsTable;
   'core.notifications': CoreNotificationsTable;
   'core.integrations': CoreIntegrationsTable;
+  'core.ingest_documents': CoreIngestDocumentsTable;
   'ai.providers': AiProvidersTable;
   'ai.models': AiModelsTable;
   'ai.usage': AiUsageTable;

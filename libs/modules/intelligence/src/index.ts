@@ -7,6 +7,7 @@ import {
   type ModuleManifest,
   type ModuleRuntime,
 } from '@bellasos/contracts';
+import { getIngestionService } from '@bellasos/core-ingestion';
 
 const DEFAULT_SECTORS = [
   'AI',
@@ -156,6 +157,18 @@ export function createIntelligenceModule(): ModuleRuntime {
         case 'brief.generate': {
           const { cadence, sectors } = briefInput.parse(input);
           const tracked = sectors ?? (await loadSectors());
+          const ingestion = getIngestionService();
+          const newsDocs = await ingestion.pollSectorNews(tracked);
+          const recent = await ingestion.listRecent({ sinceHours: 24, limit: 40 });
+          const docs = recent.length > 0 ? recent : newsDocs;
+          const { promptBlock, sources, fetchedAt } = await ingestion.getContextForQuery(
+            tracked.join(' '),
+            ['intelligence', cadence],
+          );
+          const contextBlock =
+            docs.length > 0
+              ? promptBlock
+              : 'No live news retrieved. Configure NEWSAPI_KEY or search API keys.';
           const completion = await ctx.ai.complete({
             taskType: 'reasoning',
             traceId: call.traceId,
@@ -163,10 +176,13 @@ export function createIntelligenceModule(): ModuleRuntime {
               {
                 role: 'system',
                 content:
-                  `Produce a ${cadence} intelligence briefing. For each sector ` +
-                  'give Signal, Why it matters, and Watch items.',
+                  `Produce a ${cadence} intelligence briefing from the live sources below. ` +
+                  'For each sector: Signal, Why it matters, Watch items. Cite sources.',
               },
-              { role: 'user', content: `Sectors: ${tracked.join(', ')}` },
+              {
+                role: 'user',
+                content: `Sectors: ${tracked.join(', ')}\n\nLive sources (as of ${fetchedAt}):\n${contextBlock}`,
+              },
             ],
           });
           const briefing = {
@@ -174,6 +190,8 @@ export function createIntelligenceModule(): ModuleRuntime {
             cadence,
             sectors: tracked,
             content: completion.text,
+            sources,
+            dataAsOf: fetchedAt,
             createdAt: new Date().toISOString(),
           };
           await ctx.storage.set(`briefing:${briefing.id}`, briefing);
