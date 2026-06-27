@@ -14,6 +14,7 @@
     "@bellasos/observability": "*",
     "@bellasos/runtime": "*",
     "@bellasos/core-ingestion": "*",
+    "@bellasos/core-jarvis-intelligence": "*",
     "dotenv": "^16.4.7"
   },
   "nx": {

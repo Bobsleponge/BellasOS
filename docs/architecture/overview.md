@@ -64,3 +64,9 @@ infrastructure.
    migrations as a one-shot job, starts api/worker/web.
 3. **Kubernetes/hybrid** (future): stateless apps become Deployments with HPA;
    Postgres/Redis/NATS managed or StatefulSets; secrets via Vault/KMS.
+
+## Operating model
+
+Product and intelligence architecture is defined in
+[`docs/operating-model`](../operating-model/README.md). Canonical TypeScript
+contracts live in `@bellasos/contracts/operating-model`.

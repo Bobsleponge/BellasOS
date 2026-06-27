@@ -8,6 +8,7 @@ import {
   type ModuleRuntime,
 } from '@bellasos/contracts';
 import { getIngestionService } from '@bellasos/core-ingestion';
+import { runResearchPipeline } from './pipeline';
 
 const runInput = z.object({
   subject: z.string().min(1),
@@ -90,36 +91,27 @@ export function createResearchModule(): ModuleRuntime {
             `${kind} ${subject}`,
             ['research', kind, subject.toLowerCase()],
           );
-          const completion = await ctx.ai.complete({
-            taskType: 'research',
+          const hybrid = await runResearchPipeline(ctx.ai, {
             traceId: call.traceId,
-            messages: [
-              {
-                role: 'system',
-                content:
-                  'You are a research analyst. Use ONLY the provided live sources below. ' +
-                  'Produce: Overview, Key Facts, Risks, Opportunities, Investment Thesis. ' +
-                  'Cite source titles/URLs inline. If sources are thin, say so explicitly.',
-              },
-              {
-                role: 'user',
-                content: `Research the ${kind}: ${subject}\n\nLive sources (as of ${fetchedAt}):\n${promptBlock}`,
-              },
-            ],
+            subject,
+            kind,
+            contextBlock: promptBlock,
+            fetchedAt,
           });
           const report = {
             id: crypto.randomUUID(),
             subject,
             kind,
-            content: completion.text,
+            content: hybrid.content,
             sources,
             dataAsOf: fetchedAt,
             createdAt: new Date().toISOString(),
+            hybrid: hybrid.meta,
           };
           await ctx.memory.remember({
             tier: 'long',
             ownerId: call.principal.id,
-            content: `Research on ${subject}:\n${completion.text}`,
+            content: `Research on ${subject}:\n${hybrid.content}`,
             tags: ['research', kind, subject],
             sourceRef: { type: 'research', id: report.id },
           });

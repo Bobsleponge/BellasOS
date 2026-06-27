@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Mic, MicOff, Send, Square } from 'lucide-react';
+import { ChevronDown, Mic, MicOff, Send, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useJarvisBootstrap, useJarvisSession } from '@/hooks/useJarvisSession';
@@ -9,14 +9,16 @@ import { useVoiceSession } from '@/components/shell/VoiceSessionProvider';
 import { JarvisHistoryPanel } from '@/components/shell/JarvisHistoryPanel';
 import { useShellStore, type EqState } from '@/stores/shellStore';
 import { VOICE_CANCEL_HINT } from '@/lib/voiceCancel';
+import { cn } from '@/lib/utils';
+import { JarvisSuggestedAppButton } from '@/components/shell/JarvisSuggestedAppButton';
 
 const STATUS_LABEL: Record<EqState, string> = {
-  idle: 'Voice off',
-  listening: 'Listening…',
-  heard: 'Heard you',
-  transcribing: 'Transcribing…',
-  thinking: 'Jarvis is thinking…',
-  speaking: 'Jarvis is speaking…',
+  idle: 'Standby',
+  listening: 'Listening',
+  heard: 'Heard',
+  transcribing: 'Transcribing',
+  thinking: 'Thinking',
+  speaking: 'Speaking',
 };
 
 const STATUS_VARIANT: Record<EqState, 'default' | 'success' | 'muted'> = {
@@ -32,7 +34,7 @@ function isBusyState(state: EqState): boolean {
   return state === 'thinking' || state === 'transcribing' || state === 'speaking';
 }
 
-export function JarvisPresence() {
+export function JarvisPresence({ compact = false }: { compact?: boolean }) {
   useJarvisBootstrap();
 
   const transcript = useShellStore((s) => s.transcript);
@@ -52,6 +54,7 @@ export function JarvisPresence() {
   } = useVoiceSession();
   const { sendMessage } = useJarvisSession();
   const [text, setText] = useState('');
+  const [showHistory, setShowHistory] = useState(false);
 
   const busy = isBusyState(eqState) || jarvisPending;
 
@@ -61,61 +64,80 @@ export function JarvisPresence() {
     setText('');
   };
 
-  const lastLines = transcript.slice(-4);
+  const lastLines = transcript.slice(compact ? -2 : -4);
   const statusText = micListening
-    ? STATUS_LABEL[eqState] ?? 'Voice on'
-    : 'Mic off — click to talk';
+    ? STATUS_LABEL[eqState] ?? 'Active'
+    : 'Mic off';
 
   return (
-    <div className="flex flex-col items-center gap-4 w-full max-w-2xl mx-auto px-4">
-      <div className="flex flex-col items-center gap-1">
-        <Badge variant={STATUS_VARIANT[eqState] ?? 'muted'} className="backdrop-blur-md bg-black/20 border-cyan-500/20">
+    <div
+      className={cn(
+        'flex flex-col items-center w-full mx-auto px-2',
+        compact ? 'gap-3 max-w-lg' : 'gap-4 max-w-2xl',
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Badge
+          variant={STATUS_VARIANT[eqState] ?? 'muted'}
+          className="backdrop-blur-md bg-black/30 border-cyan-500/25 text-[10px] uppercase tracking-wider"
+        >
           {statusText}
         </Badge>
         {micListening && listening && !processing && eqState === 'listening' && (
-          <span className="text-xs text-accent animate-pulse">Mic live — speak now</span>
+          <span className="text-[10px] text-accent animate-pulse">Live</span>
         )}
         {heardCaption && (
-          <span className="text-xs text-amber-200">{heardCaption}</span>
+          <span className="text-[10px] text-amber-200 max-w-[14rem] truncate">{heardCaption}</span>
         )}
       </div>
 
-      <JarvisHistoryPanel />
+      {!compact && <JarvisHistoryPanel />}
 
-      <div className="w-full min-h-[4rem] text-center space-y-1">
-        {lastLines.map((line, i) => (
-          <p
-            key={i}
-            className={
-              line.role === 'user'
-                ? 'text-white/90 text-sm'
-                : 'text-accent2 text-sm'
-            }
-          >
-            {line.role === 'user' ? `You: ${line.text}` : line.text}
-          </p>
-        ))}
-      </div>
+      {compact && (
+        <button
+          type="button"
+          onClick={() => setShowHistory((v) => !v)}
+          className="flex items-center gap-1 text-[10px] text-white/40 hover:text-white/70"
+        >
+          Conversation
+          <ChevronDown className={cn('h-3 w-3 transition-transform', showHistory && 'rotate-180')} />
+        </button>
+      )}
+      {compact && showHistory && <JarvisHistoryPanel />}
 
-      <div className="flex items-center gap-2 w-full max-w-md">
+      {lastLines.length > 0 && (
+        <div className="w-full min-h-[2.5rem] text-center space-y-0.5 rounded-xl border border-white/5 bg-black/25 px-3 py-2">
+          {lastLines.map((line, i) => (
+            <div key={i} className="space-y-1">
+              <p
+                className={cn(
+                  'text-xs line-clamp-4',
+                  line.role === 'user' ? 'text-white/85' : 'text-accent2',
+                )}
+              >
+                {line.role === 'user' ? `You: ${line.text}` : line.text}
+              </p>
+              {line.role === 'jarvis' && line.suggestedApp ? (
+                <div className="flex justify-center">
+                  <JarvisSuggestedAppButton appId={line.suggestedApp} />
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 w-full">
         <Button
           variant={micListening ? 'default' : 'glass'}
           size="icon"
           onClick={toggleMicListening}
           disabled={!supported || (busy && !canStopJarvis)}
-          title={
-            micListening
-              ? 'Stop listening (Jarvis keeps responding if busy)'
-              : 'Start listening'
-          }
+          title={micListening ? 'Stop listening' : 'Start listening'}
           aria-pressed={micListening}
-          className={micListening ? 'ring-2 ring-accent' : ''}
+          className={cn('shrink-0', micListening && 'ring-2 ring-accent/60')}
         >
-          {micListening ? (
-            <Mic className="w-5 h-5" />
-          ) : (
-            <MicOff className="w-5 h-5" />
-          )}
+          {micListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
         </Button>
         {canStopJarvis && (
           <Button
@@ -123,41 +145,40 @@ export function JarvisPresence() {
             variant="destructive"
             size="icon"
             onClick={stopJarvis}
-            title="Stop Jarvis — use if it misheard you"
-            aria-label="Stop Jarvis"
+            title="Stop Jarvis"
+            className="shrink-0"
           >
-            <Square className="w-4 h-4 fill-current" />
+            <Square className="w-3.5 h-3.5 fill-current" />
           </Button>
         )}
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submitText()}
-          placeholder="Or type to Jarvis..."
+          placeholder="Message Jarvis…"
           disabled={busy}
-          className="flex-1 min-w-[12rem] bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-accent/50 disabled:opacity-60"
+          className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-accent/40 disabled:opacity-60"
         />
         <Button
           onClick={submitText}
           disabled={busy || !text.trim()}
           size="icon"
           variant="default"
+          className="shrink-0"
         >
           <Send className="w-4 h-4" />
         </Button>
       </div>
 
       {!supported && (
-        <p className="text-xs text-muted">
-          Voice capture is not supported in this browser — use Chrome or Edge, or type instead.
-        </p>
+        <p className="text-[10px] text-muted text-center">Voice unavailable — type instead.</p>
       )}
       {speechError && (
-        <p className="text-xs text-red-400 max-w-md text-center">{speechError}</p>
+        <p className="text-[10px] text-red-400 max-w-md text-center">{speechError}</p>
       )}
-      {micListening && (
-        <p className="text-xs text-muted">
-          Speak naturally, then pause ~1 second. {VOICE_CANCEL_HINT} Mode: local Whisper ({mode}).
+      {micListening && !compact && (
+        <p className="text-[10px] text-muted text-center">
+          Pause ~1s after speaking. {VOICE_CANCEL_HINT} ({mode})
         </p>
       )}
     </div>

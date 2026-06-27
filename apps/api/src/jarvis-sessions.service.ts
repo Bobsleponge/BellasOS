@@ -18,6 +18,15 @@ export interface JarvisMessage {
   createdAt: string;
 }
 
+/** Multi-turn Jarvis cognition state (clarify → resume). */
+export interface JarvisPendingExecution {
+  plan: unknown;
+  gatheredContext: unknown;
+  parsedInputs: Record<string, unknown>;
+  missingInputs: string[];
+  startedAt: string;
+}
+
 interface MemorySession {
   id: string;
   userId: string;
@@ -83,6 +92,8 @@ export class JarvisSessionStore {
   private readonly userSessionIds = new Map<string, string[]>();
   /** sessionId → active coding project for refine/edit follow-ups */
   private readonly activeCodingProject = new Map<string, string>();
+  /** sessionId → pending Jarvis cognition execution (multi-turn clarify) */
+  private readonly pendingExecution = new Map<string, JarvisPendingExecution>();
   private dbEnabled = isDbAvailable();
 
   private rememberSession(session: MemorySession): void {
@@ -304,6 +315,15 @@ export class JarvisSessionStore {
   setActiveCodingProject(sessionId: string, projectId: string | undefined): void {
     if (projectId) this.activeCodingProject.set(sessionId, projectId);
     else this.activeCodingProject.delete(sessionId);
+  }
+
+  getPendingExecution(sessionId: string): JarvisPendingExecution | undefined {
+    return this.pendingExecution.get(sessionId);
+  }
+
+  setPendingExecution(sessionId: string, pending: JarvisPendingExecution | null | undefined): void {
+    if (pending) this.pendingExecution.set(sessionId, pending);
+    else this.pendingExecution.delete(sessionId);
   }
 
   async appendExchange(

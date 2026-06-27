@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import {
   CoreEvents,
   HOST_API_VERSION,
@@ -10,6 +11,7 @@ import {
 import { getIngestionService } from '@bellasos/core-ingestion';
 import { investmentToHolding } from './account-map';
 import { analyzePortfolio } from './analysis';
+import { runPortfolioAdvisePipeline } from './advise';
 import {
   ACCOUNT_TYPES,
   importInput,
@@ -98,6 +100,12 @@ const manifest: ModuleManifest = {
       name: 'investments.analyze',
       description: 'Portfolio analysis summary',
       permission: 'finance.read',
+    },
+    {
+      name: 'portfolio.advise',
+      description: 'Hybrid portfolio advice (OpenAI lead/review, local narrative)',
+      permission: 'finance.read',
+      inputSchema: z.object({ question: z.string().optional() }),
     },
     {
       name: 'investments.refreshPrices',
@@ -246,6 +254,21 @@ export function createFinanceModule(): ModuleRuntime {
         case 'investments.analyze': {
           const investments = await loadInvestments();
           return analyzePortfolio(investments, await currency());
+        }
+        case 'portfolio.advise': {
+          const { question } = z.object({ question: z.string().optional() }).parse(input ?? {});
+          const investments = await loadInvestments();
+          const analysis = analyzePortfolio(investments, await currency());
+          const hybrid = await runPortfolioAdvisePipeline(ctx.ai, {
+            traceId: call.traceId,
+            analysis,
+            question,
+          });
+          return {
+            analysis,
+            advice: hybrid.content,
+            hybrid: hybrid.meta,
+          };
         }
         case 'investments.refreshPrices': {
           const investments = await loadInvestments();

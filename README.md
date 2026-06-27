@@ -30,6 +30,16 @@ Apps: `apps/api` (NestJS host), `apps/worker` (agent runtime),
 
 ## Quick start
 
+**One command (recommended):**
+
+```bash
+npm install
+npm run dev:all      # infra → migrations → api, worker, web, finance tracker
+npm run dev:stop     # stop app servers + Docker stack
+```
+
+**Manual sequence** (separate terminals):
+
 ```bash
 # 1. Install dependencies (Nx monorepo, npm workspaces)
 npm install
@@ -41,11 +51,15 @@ npm run infra:up
 cp .env.example .env
 npm run db:migrate
 
-# 4. Run the platform (separate terminals)
+# 4. Run the platform
 npm run dev:api      # http://localhost:4000/api/v1
 npm run dev:worker
 npm run dev:web      # http://localhost:3000
+npm run dev:finance  # http://localhost:5000 (optional, ../Finance-Tracker)
 ```
+
+`dev:all` flags: `--skip-infra`, `--skip-migrate`, `--no-finance`.  
+`dev:stop` flag: `--keep-infra` (leave Docker running).
 
 **Windows encoding:** Cursor/VS Code can accidentally save files as UTF-16, which
 breaks Node and Next.js. The repo enforces UTF-8 via `npm run encoding:check` (also
@@ -64,6 +78,21 @@ without the full stack.
 - **Event driven** — all cross-component communication flows over the event bus.
 - **AI agnostic** — providers are replaceable behind a unified gateway.
 - **Secure by default** — authN/authZ, audit, approvals, RBAC (ABAC-ready).
+
+## Operating model
+
+BellasOS is a **Personal Intelligence Operating System** — the system of
+intelligence above your applications (systems of record). The canonical operating
+model defines domains, entities, memory, applications, agents, and Jarvis behavior:
+
+- [`docs/operating-model`](docs/operating-model)
+- [`libs/shared/contracts/src/operating-model`](libs/shared/contracts/src/operating-model)
+
+## Product design
+
+How BellasOS feels and behaves from the user's perspective:
+
+- [`docs/product`](docs/product)
 
 ## Repository layout
 

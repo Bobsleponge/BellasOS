@@ -6,61 +6,69 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Req,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ok, type CallContext, type CompletionRequest, type ProviderType } from '@bellasos/contracts';
+import { ok, resolveJarvisOpenAppIds, type CallContext, type CompletionRequest } from '@bellasos/contracts';
+import {
+  buildIntelligenceBundle,
+  formatContextForPrompt,
+  loadDecisionContext,
+  loadGoalContext,
+  loadWorkspaceContext,
+  formatReplyScopeForPrompt,
+  looksLikeBriefingRequest,
+  resolveAdaptiveModeSwitch,
+  resolveContextStack,
+  resolveOperatingModeForContext,
+  rhythmFromHour,
+  type BriefingRhythm,
+} from '@bellasos/core-jarvis-intelligence';
 import { getIngestionService } from '@bellasos/core-ingestion';
-import { planJarvisCompletion } from '@bellasos/ai-routing';
+import {
+  hybridIntentAiRequest,
+  jarvisExecuteRequest,
+  runHybridJarvisChat,
+} from './jarvis-hybrid.runner';
 import { sanitizeJarvisReply, shouldRejectVoiceTranscript, voiceMishearReply } from './transcript-guard';
 import { PLATFORM, type Platform } from './platform.token';
 import type { AuthedRequest } from './auth.guard';
 import { getJarvisSessionStore } from './jarvis-sessions.service';
 import {
+  appendAppOffer,
+  contextualUserMessage,
   defaultOpenAppForAgent,
   looksLikeFinanceWrite,
+  looksLikeFinanceAdvisory,
   looksLikeRouterJsonLeak,
   resolveAgentType,
+  resolveJarvisAppNavigation,
 } from './jarvis-orchestrator';
 import {
   buildJarvisIntentPrompt,
   formatClarificationReply,
   looksLikeIntentJsonLeak,
+  looksLikeWorkspaceIntent,
   normalizeIntentAnalysis,
   parseJarvisIntentJson,
   shouldAskForClarification,
   type JarvisIntentAnalysis,
 } from './jarvis-intent';
 import { jarvisChatSystemPrompt } from './jarvis-acknowledgments';
-import { transcribeWav, warmupTranscriber } from './stt.service';
+import {
+  extractFinanceText,
+  friendlyFinanceConnectionError,
+  resolveFinanceReplyDetail,
+  withFinanceAttribution,
+} from './finance-reply';
+import { runJarvisCognition, runJarvisAdvisoryFallback, matchAdvisoryPlaybook } from './jarvis-cognition.runner';
 import { synthesizeSpeech } from './tts.service';
 
 function callCtx(req: AuthedRequest): CallContext {
   return { principal: req.principal, traceId: req.traceId };
-}
-
-const MODULE_APPS: Record<string, string> = {
-  portfolio: 'bellasos.portfolio',
-  research: 'bellasos.research',
-  intelligence: 'bellasos.intelligence',
-  social: 'bellasos.social',
-  automation: 'bellasos.automation',
-  voice: 'bellasos.voice',
-  camera: 'bellasos.camera',
-  coding: 'bellasos.coding',
-  code: 'bellasos.coding',
-  llm: 'bellasos.llm',
-  ai: 'ai.studio',
-  console: 'system.console',
-};
-
-function friendlyFinanceConnectionError(message: string): string {
-  if (/fetch failed|ECONNREFUSED|ENOTFOUND|connect ETIMEDOUT|Finance-Tracker is not running/i.test(message)) {
-    return 'Finance-Tracker is not running. Start it on port 5000 (`cd Finance-Tracker && npm run dev`), then try again.';
-  }
-  return message;
 }
 
 function isFinanceWriteSuccess(data: unknown): boolean {
@@ -76,61 +84,39 @@ function isFinanceWriteSuccess(data: unknown): boolean {
   return false;
 }
 
-function extractText(data: unknown): string {
-  const out = (data as { output?: Record<string, unknown> })?.output ?? data;
-  if (out && typeof out === 'object') {
-    const o = out as Record<string, unknown>;
-    if (o.action === 'investments.add' && typeof o.message === 'string' && o.message.trim()) {
-      return o.message.trim();
-    }
-    if (o.needsClarification && typeof o.message === 'string' && o.message.trim()) {
-      return o.message.trim();
-    }
-    for (const key of ['message', 'answer', 'response', 'analysis', 'content', 'reply', 'text', 'result']) {
-      const v = o[key];
-      if (typeof v === 'string' && v.trim()) return v.trim();
-    }
-    if (typeof o.netWorth === 'number') {
-      return formatFinanceSummary(o);
-    }
-    if (typeof o.error === 'string') return friendlyFinanceConnectionError(o.error);
-    const report = o.report as { content?: string } | undefined;
-    if (report?.content) return report.content;
-    const briefing = o.briefing as { content?: string } | undefined;
-    if (briefing?.content) return briefing.content;
-  }
-  if (typeof data === 'string') return data;
-  return JSON.stringify(data, null, 2);
+function financeReply(result: unknown, userMessage: string): string {
+  const detail = resolveFinanceReplyDetail(userMessage);
+  return withFinanceAttribution(extractFinanceText(result, userMessage), result, detail);
 }
 
-function formatFinanceSummary(o: Record<string, unknown>): string {
-  const currency = String(o.currency ?? 'ZAR');
-  const fmt = (n: number) =>
-    `${currency === 'ZAR' ? 'R' : ''}${Math.abs(n).toLocaleString('en-ZA', { maximumFractionDigits: 0 })}`;
-  const netWorth = Number(o.netWorth ?? 0);
-  const parts = [`Your net worth is ${netWorth < 0 ? '-' : ''}${fmt(netWorth)}.`];
-  if (o.totalAssets != null || o.totalLiabilities != null) {
-    parts.push(
-      `Assets ${fmt(Number(o.totalAssets ?? 0))}, liabilities ${fmt(Number(o.totalLiabilities ?? 0))}, investments ${fmt(Number(o.investmentValue ?? 0))}.`,
-    );
+function replyScopeDomain(operatingMode?: string, applicationId?: string): string | undefined {
+  const mode = resolveOperatingModeForContext({ operatingMode, applicationId });
+  switch (mode) {
+    case 'wealth':
+      return 'wealth';
+    case 'research':
+      return 'research';
+    case 'business':
+      return 'business';
+    case 'focus':
+      return 'focus';
+    case 'personal':
+      return 'personal';
+    default:
+      return undefined;
   }
-  if (o.totalIncome != null && o.totalExpenses != null) {
-    parts.push(
-      `Income ${fmt(Number(o.totalIncome))}, expenses ${fmt(Number(o.totalExpenses))}, net cashflow ${fmt(Number(o.netCashflow ?? Number(o.totalIncome) - Number(o.totalExpenses)))}.`,
-    );
-  }
-  return parts.join(' ');
 }
 
-function contextualUserMessage(
-  message: string,
-  historyBlock: string,
-  extra?: string,
-): string {
-  const parts = [message];
-  if (historyBlock) parts.unshift(`Conversation so far:\n${historyBlock}`);
-  if (extra) parts.push(extra);
-  return parts.join('\n\n');
+function parseRhythm(value?: string): BriefingRhythm {
+  if (
+    value === 'morning' ||
+    value === 'midday' ||
+    value === 'evening' ||
+    value === 'night'
+  ) {
+    return value;
+  }
+  return rhythmFromHour(new Date().getHours());
 }
 
 function fastChatReply(message: string): string | null {
@@ -153,37 +139,13 @@ function codingProjectIdFromResult(data: unknown): string | undefined {
   return undefined;
 }
 
-function jarvisProviderConfigured(provider: ProviderType): boolean {
-  const keys: Partial<Record<ProviderType, string>> = {
-    openai: 'OPENAI_API_KEY',
-    anthropic: 'ANTHROPIC_API_KEY',
-    google: 'GOOGLE_API_KEY',
-    deepseek: 'DEEPSEEK_API_KEY',
-  };
-  const envKey = keys[provider];
-  if (envKey) return Boolean(process.env[envKey]?.trim());
-  return provider === 'ollama' || provider === 'mock';
-}
-
 function jarvisAiRequest(
   platform: Platform,
   message: string,
   partial: Omit<CompletionRequest, 'messages' | 'model' | 'taskType' | 'maxTokens' | 'temperature'>,
   opts?: { forceTier?: 'fast' | 'standard' | 'deep' },
 ): Omit<CompletionRequest, 'messages'> {
-  const plan = planJarvisCompletion(message, platform.ai.listModels(), {
-    pinModel: process.env.JARVIS_MODEL,
-    forceTier: opts?.forceTier,
-    isProviderConfigured: jarvisProviderConfigured,
-  });
-
-  return {
-    taskType: plan.taskType,
-    temperature: plan.temperature,
-    maxTokens: plan.maxTokens,
-    model: plan.model,
-    ...partial,
-  };
+  return jarvisExecuteRequest(platform, message, partial, opts);
 }
 
 @Controller('jarvis')
@@ -209,6 +171,71 @@ export class JarvisController {
     const data = await this.sessions.getSession(req.principal.id, id);
     if (!data) throw new NotFoundException('Session not found');
     return ok(data, req.traceId);
+  }
+
+  @Get('briefing')
+  async briefing(
+    @Req() req: AuthedRequest,
+    @Query('rhythm') rhythmParam?: string,
+    @Query('application') application?: string,
+    @Query('mode') mode?: string,
+    @Query('codingProjectId') codingProjectId?: string,
+    @Query('sessionId') sessionId?: string,
+    @Query('workspaceId') workspaceId?: string,
+    @Query('deep') deep?: string,
+    @Query('persist') persist?: string,
+  ) {
+    const rhythm = parseRhythm(rhythmParam);
+    const bundle = await buildIntelligenceBundle({
+      platform: this.platform,
+      ctx: callCtx(req),
+      rhythm,
+      deep: deep === 'true' || deep === '1',
+      contextInput: {
+        sessionId,
+        applicationId: application,
+        operatingMode: mode,
+        codingProjectId,
+        workspaceId,
+        principalDisplayName: req.principal.displayName,
+      },
+    });
+
+    if (persist === 'true' || persist === '1') {
+      let sid = sessionId?.trim();
+      if (!sid || !(await this.sessions.assertSession(req.principal.id, sid))) {
+        const created = await this.sessions.createSession(req.principal.id);
+        sid = created.id;
+      }
+      const existing = await this.sessions.getSession(req.principal.id, sid!);
+      if (!existing?.messages.length) {
+        await this.sessions.appendExchange(
+          req.principal.id,
+          sid!,
+          '[arrival]',
+          bundle.transcript,
+        );
+      }
+    }
+
+    return ok(
+      {
+        briefing: bundle.briefing,
+        todayItems: bundle.todayItems,
+        transcript: bundle.transcript,
+        goalProgress: bundle.goalProgress,
+        strategicInsights: bundle.strategicInsights,
+        decisionRecommendations: bundle.decisionRecommendations,
+        openDecisions: bundle.openDecisions,
+        nextActions: bundle.nextActions,
+        worldPulse: bundle.briefing.worldPulse,
+        worldTrends: bundle.briefing.worldTrends,
+        externalHighlights: bundle.externalHighlights,
+        workspaceProgress: bundle.workspaceProgress,
+        sessionId: sessionId ?? undefined,
+      },
+      req.traceId,
+    );
   }
 
   @Post('transcribe')
@@ -247,11 +274,47 @@ export class JarvisController {
     return ok(result, req.traceId);
   }
 
+  private async buildChatContextBlock(
+    input: {
+      sessionId?: string;
+      applicationId?: string;
+      operatingMode?: string;
+      codingProjectId?: string;
+      workspaceId?: string;
+    },
+    ctx: CallContext,
+  ): Promise<string> {
+    const [goalContext, decisionContext, workspaceContext] = await Promise.all([
+      loadGoalContext(this.platform, ctx, input.applicationId),
+      loadDecisionContext(this.platform, ctx, input.applicationId),
+      loadWorkspaceContext(this.platform, ctx, input.workspaceId),
+    ]);
+    const stack = resolveContextStack({
+      sessionId: input.sessionId,
+      applicationId: input.applicationId,
+      operatingMode: input.operatingMode,
+      codingProjectId: input.codingProjectId,
+      goalContext,
+      decisionContext,
+      workspaceContext: workspaceContext ?? undefined,
+    });
+    return formatContextForPrompt(
+      stack,
+      goalContext,
+      decisionContext,
+      undefined,
+      workspaceContext,
+      input.applicationId,
+    );
+  }
+
   private async analyzeIntent(
     message: string,
     historyBlock: string,
     activeCodingProjectId: string | undefined,
     traceId: string,
+    contextBlock?: string,
+    operatingMode?: string,
   ): Promise<JarvisIntentAnalysis | null> {
     const agentInfos = this.platform.orchestrator.agentInfos();
     const agents = this.platform.orchestrator.listAgents();
@@ -261,13 +324,19 @@ export class JarvisController {
       message,
       agents: agentInfos,
       moduleIds: modules,
-      moduleApps: Object.values(MODULE_APPS),
+      moduleApps: resolveJarvisOpenAppIds(),
       historyBlock: historyBlock || undefined,
       activeCodingProjectId,
+      contextBlock,
+      operatingMode,
     });
 
+    const intentAi =
+      (await hybridIntentAiRequest(this.platform, message, traceId)) ??
+      jarvisAiRequest(this.platform, message, { traceId }, { forceTier: 'fast' });
+
     const routed = await this.platform.ai.complete({
-      ...jarvisAiRequest(this.platform, message, { traceId }, { forceTier: 'fast' }),
+      ...intentAi,
       messages: [
         { role: 'system', content: 'Return only JSON for intent analysis.' },
         { role: 'user', content: prompt },
@@ -286,6 +355,8 @@ export class JarvisController {
     traceId: string,
     source?: 'voice' | 'text',
     clientAck?: boolean,
+    contextBlock?: string,
+    replyScopeBlock?: string,
   ): Promise<{ reply: string; extra: Record<string, unknown> }> {
     const ingestion = getIngestionService();
     const fast = await ingestion.tryFastAnswer(message);
@@ -306,17 +377,54 @@ export class JarvisController {
       dataAsOf = ctx.fetchedAt;
     }
 
+    const systemPrompt = jarvisChatSystemPrompt(source, clientAck, contextBlock, replyScopeBlock);
+    const userContent = contextualUserMessage(
+      message,
+      '',
+      ctxBlock ? `Relevant context:\n${ctxBlock}` : undefined,
+    );
+
+    const hybrid = await runHybridJarvisChat(this.platform, {
+      message,
+      traceId,
+      historyBlock,
+      contextBlock,
+      systemPrompt,
+      historyMessages,
+      userContent,
+    });
+
+    if (hybrid) {
+      return {
+        reply: hybrid.text,
+        extra: {
+          dataAsOf,
+          sources,
+          hybridLead: true,
+          hybridProfile: hybrid.meta.profile,
+          guideModel: hybrid.meta.leadModel,
+          executeModel: hybrid.meta.executeModel,
+          reviewModel: hybrid.meta.reviewModel,
+          synthesisModel: hybrid.meta.synthesisModel,
+          reviewLoops: hybrid.meta.reviewLoops,
+          reviewPassed: hybrid.meta.reviewPassed,
+          synthesized: hybrid.meta.synthesized,
+          taskBrief: hybrid.brief,
+        },
+      };
+    }
+
     const chat = await this.platform.ai.complete({
       ...jarvisAiRequest(this.platform, message, { traceId }),
       messages: [
         {
           role: 'system',
-          content: jarvisChatSystemPrompt(source, clientAck),
+          content: systemPrompt,
         },
         ...historyMessages,
         {
           role: 'user',
-          content: contextualUserMessage(message, '', ctxBlock ? `Relevant context:\n${ctxBlock}` : undefined),
+          content: userContent,
         },
       ],
     });
@@ -336,6 +444,10 @@ export class JarvisController {
       source?: 'voice' | 'text';
       codingProjectId?: string;
       clientAck?: boolean;
+      application?: string;
+      mode?: string;
+      modeManual?: boolean;
+      workspaceId?: string;
     },
   ) {
     let sessionId = body.sessionId?.trim();
@@ -366,17 +478,64 @@ export class JarvisController {
       this.sessions.getActiveCodingProject(sessionId!) ||
       undefined;
 
+    const contextBlock = await this.buildChatContextBlock(
+      {
+        sessionId,
+        applicationId: body.application,
+        operatingMode: body.mode,
+        codingProjectId: activeCodingProjectId,
+        workspaceId: body.workspaceId,
+      },
+      callCtx(req),
+    );
+    const replyScopeBlock = formatReplyScopeForPrompt(
+      message,
+      replyScopeDomain(body.mode, body.application),
+    );
+
+    const mergeAdaptiveMode = (
+      extra: Record<string, unknown>,
+      intent?: JarvisIntentAnalysis | null,
+    ): Record<string, unknown> => {
+      const routed = extra.routedTo as { id?: string; kind?: string } | undefined;
+      const result = resolveAdaptiveModeSwitch({
+        currentMode: resolveOperatingModeForContext({
+          operatingMode: body.mode,
+          applicationId: body.application,
+        }),
+        message,
+        intentDomain: intent?.understanding.domain,
+        agentType: routed?.kind === 'agent' ? routed.id : intent?.handler.agentType,
+        openApp:
+          typeof extra.openApp === 'string' ? extra.openApp : intent?.handler.openApp,
+        applicationId: body.application,
+        suggestedMode: intent?.suggestedOperatingMode ?? undefined,
+        suggestionConfidence: intent?.confidence,
+        modeManual: body.modeManual === true,
+        actionKind: intent?.understanding.actionKind,
+      });
+      if (!result.switched) return extra;
+      return {
+        ...extra,
+        operatingMode: result.mode,
+        modeSwitched: true,
+        modeSwitchReason: result.reason,
+      };
+    };
+
     const finish = async (
       reply: string,
       extra: Record<string, unknown> = {},
       state: 'completed' | 'needs_approval' | 'error' = 'completed',
+      intent?: JarvisIntentAnalysis | null,
     ) => {
       const safeReply = sanitizeJarvisReply(reply, message, body.source);
       if (extra.codingProjectId && typeof extra.codingProjectId === 'string') {
         this.sessions.setActiveCodingProject(sessionId!, extra.codingProjectId);
       }
       await this.sessions.appendExchange(req.principal.id, sessionId!, message, safeReply);
-      return ok({ reply: safeReply, state, sessionId, ...extra }, req.traceId);
+      const merged = mergeAdaptiveMode(extra, intent);
+      return ok({ reply: safeReply, state, sessionId, ...merged }, req.traceId);
     };
 
     if (body.source === 'voice' && shouldRejectVoiceTranscript(message)) {
@@ -391,8 +550,181 @@ export class JarvisController {
       return finish(instant);
     }
 
-    const financeContext = contextualUserMessage(message, historyBlock);
-    if (looksLikeFinanceWrite(financeContext)) {
+    const pendingExecution = this.sessions.getPendingExecution(sessionId!);
+    const skipCognition =
+      !pendingExecution &&
+      !looksLikeFinanceAdvisory(message) &&
+      !matchAdvisoryPlaybook(message) &&
+      (looksLikeBriefingRequest(message).match || looksLikeWorkspaceIntent(message));
+
+    if (!skipCognition) {
+      const cognitionUserContent = contextualUserMessage(
+        message,
+        historyBlock,
+        undefined,
+        replyScopeBlock,
+      );
+      const cognitionSystemPrompt = jarvisChatSystemPrompt(
+        body.source,
+        body.clientAck,
+        contextBlock,
+        replyScopeBlock,
+      );
+
+      try {
+        const cognition = await runJarvisCognition(this.platform, {
+          message,
+          traceId: req.traceId,
+          actorId: req.principal.id,
+          ctx: callCtx(req),
+          historyBlock,
+          contextBlock,
+          systemPrompt: cognitionSystemPrompt,
+          historyMessages,
+          userContent: cognitionUserContent,
+          pending: pendingExecution ?? null,
+        });
+
+        if (cognition.handled) {
+          this.sessions.setPendingExecution(
+            sessionId!,
+            cognition.pending
+              ? {
+                  plan: cognition.pending.plan,
+                  gatheredContext: cognition.pending.gatheredContext,
+                  parsedInputs: cognition.pending.parsedInputs,
+                  missingInputs: cognition.pending.missingInputs,
+                  startedAt: cognition.pending.startedAt,
+                }
+              : null,
+          );
+          return finish(cognition.reply, {
+            ...cognition.extra,
+            cognition: true,
+          });
+        }
+
+        if (matchAdvisoryPlaybook(message)) {
+          const advisory = await runJarvisAdvisoryFallback(this.platform, {
+            message,
+            traceId: req.traceId,
+            actorId: req.principal.id,
+            ctx: callCtx(req),
+            historyBlock,
+            contextBlock,
+            systemPrompt: cognitionSystemPrompt,
+            historyMessages,
+            userContent: cognitionUserContent,
+            pending: pendingExecution ?? null,
+          });
+          if (advisory?.handled) {
+            this.sessions.setPendingExecution(
+              sessionId!,
+              advisory.pending
+                ? {
+                    plan: advisory.pending.plan,
+                    gatheredContext: advisory.pending.gatheredContext,
+                    parsedInputs: advisory.pending.parsedInputs,
+                    missingInputs: advisory.pending.missingInputs,
+                    startedAt: advisory.pending.startedAt,
+                  }
+                : null,
+            );
+            return finish(advisory.reply, {
+              ...advisory.extra,
+              cognition: true,
+              cognitionFallback: true,
+            });
+          }
+        }
+      } catch (err) {
+        return finish(
+          `I hit an error planning that request. ${(err as Error).message}`,
+          { cognition: false, state: 'error' },
+          'error',
+        );
+      }
+    }
+
+    if (looksLikeWorkspaceIntent(message)) {
+      try {
+        const created = (await this.platform.registry.dispatch(
+          'bellasos.workspace',
+          'workspace.fromMessage',
+          { message, jarvisSessionId: sessionId },
+          callCtx(req),
+        )) as {
+          matched?: boolean;
+          workspace?: { id: string; title: string; progressSummary?: string };
+          session?: { id: string };
+          openApp?: string;
+          added?: Record<string, number>;
+        };
+        if (created?.matched && created.workspace) {
+          const added = created.added ?? {};
+          const linked = [
+            added.goals ? `${added.goals} goal${added.goals === 1 ? '' : 's'}` : null,
+            added.decisions ? `${added.decisions} decision${added.decisions === 1 ? '' : 's'}` : null,
+          ]
+            .filter(Boolean)
+            .join(' and ');
+          const detail = linked ? ` I've linked ${linked}.` : '';
+          return finish(
+            `I've opened the ${created.workspace.title} workspace.${detail}`.trim(),
+            {
+              workspaceId: created.workspace.id,
+              focusSessionId: created.session?.id,
+              openApp: created.openApp,
+            },
+          );
+        }
+      } catch (err) {
+        return finish(
+          `I could not create that workspace right now. ${(err as Error).message}`,
+          {},
+          'error',
+        );
+      }
+    }
+
+    const briefingReq = looksLikeBriefingRequest(message);
+    if (briefingReq.match) {
+      try {
+        const bundle = await buildIntelligenceBundle({
+          platform: this.platform,
+          ctx: callCtx(req),
+          rhythm: parseRhythm(
+            /evening|end of day/.test(message.toLowerCase())
+              ? 'evening'
+              : /midday|afternoon check/.test(message.toLowerCase())
+                ? 'midday'
+                : undefined,
+          ),
+          deep: briefingReq.deep,
+          skipCache: briefingReq.deep,
+          contextInput: {
+            sessionId,
+            codingProjectId: activeCodingProjectId,
+            applicationId: body.application,
+            operatingMode: body.mode,
+            workspaceId: body.workspaceId,
+            principalDisplayName: req.principal.displayName,
+          },
+        });
+        return finish(bundle.transcript, {
+          briefingRhythm: bundle.briefing.rhythm,
+        });
+      } catch (err) {
+        return finish(
+          `I could not compose a briefing right now. ${(err as Error).message}`,
+          {},
+          'error',
+        );
+      }
+    }
+
+    const financeContext = contextualUserMessage(message, historyBlock, undefined, replyScopeBlock);
+    if (looksLikeFinanceWrite(message)) {
       try {
         const result = await this.platform.orchestrator.command({
           agentType: 'finance',
@@ -401,9 +733,9 @@ export class JarvisController {
           traceId: req.traceId,
           actorId: req.principal.id,
         });
-        return finish(extractText(result), {
+        return finish(financeReply(result, message), {
           routedTo: { kind: 'agent', id: 'finance' },
-          ...(isFinanceWriteSuccess(result) ? { openApp: 'bellasos.portfolio' } : {}),
+          ...(isFinanceWriteSuccess(result) ? { suggestedApp: 'wealth' } : {}),
         });
       } catch (err) {
         return finish(
@@ -416,7 +748,14 @@ export class JarvisController {
 
     let intent: JarvisIntentAnalysis | null = null;
     try {
-      intent = await this.analyzeIntent(message, historyBlock, activeCodingProjectId, req.traceId);
+      intent = await this.analyzeIntent(
+        message,
+        historyBlock,
+        activeCodingProjectId,
+        req.traceId,
+        contextBlock,
+        body.mode,
+      );
     } catch (err) {
       return finish(`Error: ${(err as Error).message}`, {}, 'error');
     }
@@ -430,6 +769,8 @@ export class JarvisController {
           req.traceId,
           body.source,
           body.clientAck,
+          contextBlock,
+          replyScopeBlock,
         );
         return finish(chat.reply, chat.extra);
       } catch (err) {
@@ -437,22 +778,80 @@ export class JarvisController {
       }
     }
 
-    if (shouldAskForClarification(intent, contextualUserMessage(message, historyBlock))) {
-      return finish(formatClarificationReply(intent), {
-        intent: intent.understanding,
-        state: 'needs_clarification',
-      });
+    if (
+      intent.handler.type === 'chat' &&
+      looksLikeBriefingRequest(message).match
+    ) {
+      try {
+        const bundle = await buildIntelligenceBundle({
+          platform: this.platform,
+          ctx: callCtx(req),
+          rhythm: parseRhythm(
+            /evening|end of day/.test(message.toLowerCase())
+              ? 'evening'
+              : /midday|afternoon check/.test(message.toLowerCase())
+                ? 'midday'
+                : undefined,
+          ),
+          deep: looksLikeBriefingRequest(message).deep,
+          skipCache: looksLikeBriefingRequest(message).deep,
+          contextInput: {
+            sessionId,
+            codingProjectId: activeCodingProjectId,
+            applicationId: body.application,
+            operatingMode: body.mode,
+            workspaceId: body.workspaceId,
+            principalDisplayName: req.principal.displayName,
+          },
+        });
+        return finish(bundle.transcript, {
+          briefingRhythm: bundle.briefing.rhythm,
+        });
+      } catch (err) {
+        return finish(
+          `I could not compose a briefing right now. ${(err as Error).message}`,
+          {},
+          'error',
+        );
+      }
+    }
+
+    if (
+      shouldAskForClarification(
+        intent,
+        contextualUserMessage(message, historyBlock, undefined, replyScopeBlock),
+      )
+    ) {
+      return finish(
+        formatClarificationReply(intent),
+        {
+          intent: intent.understanding,
+          state: 'needs_clarification',
+        },
+        'completed',
+        intent,
+      );
     }
 
     const agents = this.platform.orchestrator.listAgents();
-    const agentPrompt = contextualUserMessage(intent.prompt ?? message, historyBlock);
+    const agentPrompt = contextualUserMessage(
+      intent.prompt ?? message,
+      historyBlock,
+      undefined,
+      replyScopeBlock,
+    );
 
     if (intent.handler.type === 'open_app' && intent.handler.openApp) {
-      return finish(intent.reply ?? `Opening ${intent.handler.openApp}.`, {
-        openApp: intent.handler.openApp,
-        routedTo: { kind: 'module', id: intent.handler.openApp },
-        intent: intent.understanding,
-      });
+      return finish(
+        intent.reply ?? `Opening ${intent.handler.openApp}.`,
+        {
+          openApp: intent.handler.openApp,
+          routedTo: { kind: 'module', id: intent.handler.openApp },
+          intent: intent.understanding,
+        },
+        'completed',
+        intent,
+      );
     }
 
     if (intent.handler.type === 'agent' && intent.handler.agentType) {
@@ -472,6 +871,8 @@ export class JarvisController {
           return finish(
             'Select your project in Coding Studio first, then tell me what to fix.',
             { openApp: 'bellasos.coding', intent: intent.understanding },
+            'completed',
+            intent,
           );
         }
         const result = await this.platform.orchestrator.command({
@@ -485,19 +886,36 @@ export class JarvisController {
           actorId: req.principal.id,
         });
         const projectId = codingProjectIdFromResult(result);
-        const openApp =
+        const appId =
           intent.handler.openApp ?? defaultOpenAppForAgent(agentType) ?? (projectId ? 'bellasos.coding' : undefined);
-        const replyText = extractText(result);
+        const nav = resolveJarvisAppNavigation({
+          appId,
+          actionKind: intent.understanding.actionKind,
+          agentType,
+          explicitNavigate: intent.handler.type === 'open_app',
+          hasCodingProject: Boolean(projectId),
+        });
+        let replyText =
+          agentType === 'finance'
+            ? financeReply(result, message)
+            : extractFinanceText(result);
         const reply =
           agentType === 'coding' && projectId
             ? `Done. Opening Coding Studio — click the preview to play. ${replyText.slice(0, 120)}`
-            : replyText;
-        return finish(reply, {
-          routedTo: { kind: 'agent', id: agentType },
-          openApp,
-          codingProjectId: projectId,
-          intent: intent.understanding,
-        });
+            : nav.suggestedApp
+              ? appendAppOffer(replyText, nav.suggestedApp)
+              : replyText;
+        return finish(
+          reply,
+          {
+            routedTo: { kind: 'agent', id: agentType },
+            ...nav,
+            codingProjectId: projectId,
+            intent: intent.understanding,
+          },
+          'completed',
+          intent,
+        );
       } catch (err) {
         return finish(`Error: ${(err as Error).message}`, {}, 'error');
       }
@@ -511,10 +929,15 @@ export class JarvisController {
           !activeCodingProjectId &&
           !(intent.handler.actionInput as { projectId?: string } | undefined)?.projectId
         ) {
-          return finish('Select your project in Coding Studio first, then tell me what to fix.', {
-            openApp: 'bellasos.coding',
-            intent: intent.understanding,
-          });
+          return finish(
+            'Select your project in Coding Studio first, then tell me what to fix.',
+            {
+              openApp: 'bellasos.coding',
+              intent: intent.understanding,
+            },
+            'completed',
+            intent,
+          );
         }
         const actionInput: Record<string, unknown> = {
           ...(intent.handler.actionInput ?? {}),
@@ -544,17 +967,39 @@ export class JarvisController {
           (intent.handler.action === 'task.execute' || intent.handler.action === 'task.refine')
             ? codingProjectIdFromResult(result)
             : undefined;
-        return finish(extractText(result), {
-          routedTo: { kind: 'module', id: intent.handler.moduleId },
-          action: {
-            moduleId: intent.handler.moduleId,
-            action: intent.handler.action,
-            input: intent.handler.actionInput,
-          },
-          openApp: intent.handler.openApp ?? intent.handler.moduleId,
-          codingProjectId: projectId,
-          intent: intent.understanding,
+        const moduleAppId =
+          intent.handler.openApp ??
+          (intent.handler.moduleId === 'bellasos.finance-tracker' ? 'wealth' : intent.handler.moduleId);
+        const nav = resolveJarvisAppNavigation({
+          appId: moduleAppId,
+          actionKind: intent.understanding.actionKind,
+          agentType: intent.handler.moduleId === 'bellasos.coding' ? 'coding' : undefined,
+          explicitNavigate: intent.handler.type === 'open_app',
+          hasCodingProject: Boolean(projectId),
         });
+        const moduleReplyBase =
+          intent.handler.moduleId === 'bellasos.finance-tracker'
+            ? financeReply(result, message)
+            : extractFinanceText(result);
+        const moduleReply = nav.suggestedApp
+          ? appendAppOffer(moduleReplyBase, nav.suggestedApp)
+          : moduleReplyBase;
+        return finish(
+          moduleReply,
+          {
+            routedTo: { kind: 'module', id: intent.handler.moduleId },
+            action: {
+              moduleId: intent.handler.moduleId,
+              action: intent.handler.action,
+              input: intent.handler.actionInput,
+            },
+            ...nav,
+            codingProjectId: projectId,
+            intent: intent.understanding,
+          },
+          'completed',
+          intent,
+        );
       } catch (err) {
         const msg = (err as Error).message;
         if (msg.toLowerCase().includes('approval')) {
@@ -565,14 +1010,54 @@ export class JarvisController {
     }
 
     if (intent.handler.type === 'chat' && intent.reply && !looksLikeIntentJsonLeak(intent.reply)) {
-      return finish(intent.reply, { intent: intent.understanding });
+      return finish(intent.reply, { intent: intent.understanding }, 'completed', intent);
     }
 
     if (intent.reply && !looksLikeRouterJsonLeak(intent.reply) && !looksLikeIntentJsonLeak(intent.reply)) {
-      return finish(intent.reply, { intent: intent.understanding });
+      return finish(intent.reply, { intent: intent.understanding }, 'completed', intent);
     }
 
     try {
+      if (looksLikeFinanceAdvisory(message) || matchAdvisoryPlaybook(message)) {
+        const advisory = await runJarvisAdvisoryFallback(this.platform, {
+          message,
+          traceId: req.traceId,
+          actorId: req.principal.id,
+          ctx: callCtx(req),
+          historyBlock,
+          contextBlock,
+          systemPrompt: jarvisChatSystemPrompt(
+            body.source,
+            body.clientAck,
+            contextBlock,
+            replyScopeBlock,
+          ),
+          historyMessages,
+          userContent: contextualUserMessage(message, historyBlock, undefined, replyScopeBlock),
+          pending: this.sessions.getPendingExecution(sessionId!) ?? null,
+        });
+        if (advisory?.handled) {
+          this.sessions.setPendingExecution(
+            sessionId!,
+            advisory.pending
+              ? {
+                  plan: advisory.pending.plan,
+                  gatheredContext: advisory.pending.gatheredContext,
+                  parsedInputs: advisory.pending.parsedInputs,
+                  missingInputs: advisory.pending.missingInputs,
+                  startedAt: advisory.pending.startedAt,
+                }
+              : null,
+          );
+          return finish(advisory.reply, {
+            ...advisory.extra,
+            cognition: true,
+            cognitionFallback: true,
+            intent: intent.understanding,
+          });
+        }
+      }
+
       const chat = await this.runGeneralChat(
         message,
         historyMessages,
@@ -580,8 +1065,10 @@ export class JarvisController {
         req.traceId,
         body.source,
         body.clientAck,
+        contextBlock,
+        replyScopeBlock,
       );
-      return finish(chat.reply, { ...chat.extra, intent: intent.understanding });
+      return finish(chat.reply, { ...chat.extra, intent: intent.understanding }, 'completed', intent);
     } catch (err) {
       return finish(`Error: ${(err as Error).message}`, {}, 'error');
     }

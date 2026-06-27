@@ -1,3 +1,5 @@
+import { getBellasAuthToken } from './authSession';
+
 export interface ApiResponse<T> {
   data: T | null;
   error: { code: string; message: string; details?: unknown } | null;
@@ -23,10 +25,12 @@ async function request<T>(
   init?: RequestInit,
 ): Promise<T> {
   let res: Response;
+  const token = await getBellasAuthToken();
+  const authHeaders = token ? { authorization: `Bearer ${token}` } : {};
   try {
     res = await fetch(`${BASE}${path}`, {
       ...init,
-      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+      headers: { 'content-type': 'application/json', ...authHeaders, ...(init?.headers ?? {}) },
       cache: 'no-store',
     });
   } catch (err) {
@@ -56,6 +60,127 @@ export const api = {
   runs: () => request<AgentRun[]>('/agents/runs'),
   audit: () => request<AuditEntry[]>('/audit'),
   approvals: () => request<Approval[]>('/approvals'),
+  today: (params?: { application?: string; mode?: string; workspaceId?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.application) q.set('application', params.application);
+    if (params?.mode) q.set('mode', params.mode);
+    if (params?.workspaceId) q.set('workspaceId', params.workspaceId);
+    const qs = q.toString();
+    return request<TodayFeed>(`/today${qs ? `?${qs}` : ''}`);
+  },
+  worldSignals: (params?: { sector?: string; sinceHours?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.sector) q.set('sector', params.sector);
+    if (params?.sinceHours != null) q.set('sinceHours', String(params.sinceHours));
+    const qs = q.toString();
+    return request<{ count: number; signals: WorldSignalItem[] }>(
+      `/world/signals${qs ? `?${qs}` : ''}`,
+    );
+  },
+  worldTrends: () => request<{ trends: WorldTrendItem[] }>('/world/trends'),
+  worldCollect: () => request<WorldCollectionResult>('/world/collect', { method: 'POST' }),
+  goals: () => request<{ goals: Goal[] }>('/goals'),
+  createGoal: (body: Partial<Goal>) =>
+    request<{ goal: Goal }>('/goals', { method: 'POST', body: JSON.stringify(body) }),
+  initiatives: () => request<{ initiatives: Initiative[] }>('/initiatives'),
+  goalProgress: (application?: string) => {
+    const qs = application ? `?application=${encodeURIComponent(application)}` : '';
+    return request<GoalContext>(`/goals/progress${qs}`);
+  },
+  decisions: (params?: { status?: string; category?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.category) qs.set('category', params.category);
+    const q = qs.toString();
+    return request<{ decisions: Decision[] }>(`/decisions${q ? `?${q}` : ''}`);
+  },
+  decisionRecommendations: (application?: string) => {
+    const qs = application ? `?application=${encodeURIComponent(application)}` : '';
+    return request<{ context: DecisionContext }>(`/decisions/recommendations${qs}`);
+  },
+  commitDecision: (id: string, body: { chosenOptionId: string; rationale?: string }) =>
+    request<{ decision: Decision }>(`/decisions/${id}/commit`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  workspaces: (params?: { status?: string; type?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set('status', params.status);
+    if (params?.type) q.set('type', params.type);
+    const qs = q.toString();
+    return request<{ workspaces: Workspace[] }>(`/workspaces${qs ? `?${qs}` : ''}`);
+  },
+  createWorkspace: (body: Partial<Workspace>) =>
+    request<{ workspace: Workspace }>('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  getWorkspace: (id: string, context = false) => {
+    const qs = context ? '?context=true' : '';
+    return request<{ workspace: Workspace } | WorkspaceContext>(`/workspaces/${id}${qs}`);
+  },
+  activateWorkspace: (id: string, body: Record<string, unknown> = {}) =>
+    request<{ workspace: Workspace; session: FocusSession }>(`/workspaces/${id}/activate`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  pauseWorkspace: (id: string) =>
+    request<{ workspace: Workspace }>(`/workspaces/${id}/pause`, { method: 'POST' }),
+  archiveWorkspace: (id: string) =>
+    request<{ workspace: Workspace }>(`/workspaces/${id}/archive`, { method: 'POST' }),
+  restoreWorkspace: (id: string) =>
+    request<{ workspace: Workspace }>(`/workspaces/${id}/restore`, { method: 'POST' }),
+  gatherWorkspace: (id: string) =>
+    request<{ workspace: Workspace; added: WorkspaceGatherCounts }>(`/workspaces/${id}/gather`, {
+      method: 'POST',
+    }),
+  activeFocusSession: () => request<{ session: FocusSession | null }>('/sessions/active'),
+  memoryRecall: (body: { query: string; tier?: 'short' | 'working' | 'long'; limit?: number }) =>
+    request<MemoryHit[]>('/memory/recall', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  memoryRemember: (body: {
+    content: string;
+    tier?: 'short' | 'working' | 'long';
+    tags?: string[];
+  }) =>
+    request<MemoryItem>('/memory/remember', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  workspaceContext: (id: string) => request<WorkspaceContext>(`/workspaces/${id}?context=true`),
+  endFocusSession: (id: string) =>
+    request<{ session: FocusSession }>(`/sessions/${id}/end`, { method: 'POST' }),
+  artifacts: (params?: { workspaceId?: string; kind?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.workspaceId) q.set('workspaceId', params.workspaceId);
+    if (params?.kind) q.set('kind', params.kind);
+    const qs = q.toString();
+    return request<{ artifacts: Artifact[] }>(`/artifacts${qs ? `?${qs}` : ''}`);
+  },
+  jarvisBriefing: (params?: {
+    rhythm?: string;
+    application?: string;
+    mode?: string;
+    codingProjectId?: string;
+    sessionId?: string;
+    deep?: boolean;
+    persist?: boolean;
+    workspaceId?: string;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.rhythm) q.set('rhythm', params.rhythm);
+    if (params?.application) q.set('application', params.application);
+    if (params?.mode) q.set('mode', params.mode);
+    if (params?.codingProjectId) q.set('codingProjectId', params.codingProjectId);
+    if (params?.sessionId) q.set('sessionId', params.sessionId);
+    if (params?.workspaceId) q.set('workspaceId', params.workspaceId);
+    if (params?.deep) q.set('deep', 'true');
+    if (params?.persist) q.set('persist', 'true');
+    const qs = q.toString();
+    return request<JarvisBriefingResponse>(`/jarvis/briefing${qs ? `?${qs}` : ''}`);
+  },
   resolveApproval: (id: string, decision: 'approved' | 'rejected', reason?: string) =>
     request<unknown>(`/approvals/${encodeURIComponent(id)}/resolve`, {
       method: 'POST',
@@ -129,7 +254,14 @@ export const api = {
       body: JSON.stringify({ strategy }),
     }),
   testProvider: (provider: string) =>
-    request<{ ok: boolean; error?: string; model?: string; sample?: string; version?: unknown }>(
+    request<{
+      ok: boolean;
+      error?: string;
+      model?: string;
+      provider?: string;
+      sample?: string;
+      version?: unknown;
+    }>(
       `/config/ai/providers/${encodeURIComponent(provider)}/test`,
       { method: 'POST' },
     ),
@@ -174,6 +306,12 @@ export const api = {
     request<{ disconnected: boolean }>('/integrations/finance-tracker/disconnect', {
       method: 'DELETE',
     }),
+  financeTrackerEmbedUrl: (path?: string) => {
+    const q = path ? `?path=${encodeURIComponent(path)}` : '';
+    return request<{ url: string; baseUrl: string; nextPath: string }>(
+      `/integrations/finance-tracker/embed-url${q}`,
+    );
+  },
   enableModule: (id: string) =>
     request<{ id: string; status: string }>(`/modules/${encodeURIComponent(id)}/enable`, {
       method: 'POST',
@@ -190,10 +328,24 @@ export const api = {
     codingProjectId?: string,
     clientAck?: boolean,
     signal?: AbortSignal,
+    application?: string,
+    mode?: string,
+    workspaceId?: string,
+    modeManual?: boolean,
   ) =>
     request<JarvisChatResponse>('/jarvis/chat', {
       method: 'POST',
-      body: JSON.stringify({ message, sessionId, source, codingProjectId, clientAck }),
+      body: JSON.stringify({
+        message,
+        sessionId,
+        source,
+        codingProjectId,
+        clientAck,
+        application,
+        mode,
+        workspaceId,
+        modeManual,
+      }),
       signal,
     }),
   jarvisSessions: () =>
@@ -330,6 +482,8 @@ export interface ModelDescriptor {
 export interface ProviderStatus {
   provider: string;
   configured: boolean;
+  source?: 'ui' | 'env' | 'none';
+  masked?: string;
 }
 
 export interface ModuleSettingsResponse {
@@ -358,6 +512,354 @@ export interface NotificationItem {
   createdAt: string;
 }
 
+export type TodayItemKind =
+  | 'approval'
+  | 'alert'
+  | 'intelligence'
+  | 'wealth'
+  | 'activity'
+  | 'priority'
+  | 'goal'
+  | 'decision'
+  | 'world'
+  | 'workspace';
+
+export interface TodayItem {
+  id: string;
+  kind: TodayItemKind;
+  title: string;
+  subtitle?: string;
+  href?: string;
+  actionLabel?: string;
+  createdAt?: string;
+  priority: number;
+}
+
+export interface TodayFeed {
+  greeting: string;
+  contextLine?: string;
+  items: TodayItem[];
+  connection: { status: 'connected' | 'degraded' | 'offline'; label: string };
+  generatedAt: string;
+}
+
+export interface JarvisBriefingResponse {
+  briefing: {
+    rhythm: 'morning' | 'midday' | 'evening' | 'night';
+    phase: string;
+    greeting: string;
+    narrative: string;
+    offerDepth: string;
+    generatedAt: string;
+    strategicInsights?: StrategicInsight[];
+    goalProgress?: GoalProgressSummary[];
+    decisionRecommendations?: DecisionRecommendation[];
+    openDecisions?: DecisionSummary[];
+    nextActions?: NextAction[];
+    worldPulse?: WorldIntelligenceSummary[];
+    worldTrends?: WorldTrendItem[];
+    externalHighlights?: WorldSignalItem[];
+  };
+  todayItems: TodayItem[];
+  transcript: string;
+  goalProgress?: GoalProgressSummary[];
+  strategicInsights?: StrategicInsight[];
+  decisionRecommendations?: DecisionRecommendation[];
+  openDecisions?: DecisionSummary[];
+  nextActions?: NextAction[];
+  worldPulse?: WorldIntelligenceSummary[];
+  worldTrends?: WorldTrendItem[];
+  externalHighlights?: WorldSignalItem[];
+  sessionId?: string;
+}
+
+export interface WorldTrendItem {
+  id: string;
+  sector: string;
+  direction: 'up' | 'down' | 'flat' | 'volatile';
+  docCount: number;
+  windowHours: number;
+  summary: string;
+  confidence: number;
+  linkedGoalIds?: string[];
+}
+
+export interface WorldIntelligenceSummary {
+  id: string;
+  headline: string;
+  sector: string;
+  relevanceLine?: string;
+  trendDirection?: string;
+}
+
+export interface WorldSignalItem {
+  id: string;
+  title: string;
+  summary: string;
+  source: string;
+  relevanceLine?: string;
+  href?: string;
+  worldSignal?: {
+    ingestDocId: string;
+    sector: string;
+    kind: string;
+    title: string;
+    summary: string;
+    fetchedAt: string;
+    baseScore: number;
+  };
+  worldRelevance?: {
+    relevanceLine: string;
+    audienceLine: string;
+    goalIds: string[];
+  };
+  worldOpportunity?: {
+    kind: string;
+    title: string;
+    summary: string;
+    severity: string;
+  };
+}
+
+export interface WorldCollectionResult {
+  total: number;
+  bySource: Record<string, number>;
+  collectedAt: string;
+}
+
+export interface GoalTarget {
+  metric: string;
+  targetValue: number;
+  unit?: string;
+  direction: 'increase' | 'decrease' | 'maintain';
+}
+
+export interface GoalProgress {
+  current?: number;
+  baseline?: number;
+  pct?: number;
+  trend: 'up' | 'down' | 'flat' | 'unknown';
+  updatedAt?: string;
+}
+
+export interface Goal {
+  id: string;
+  objective: string;
+  target?: GoalTarget;
+  category: string;
+  domainId: string;
+  horizon: string;
+  deadlineAt?: string;
+  progress: GoalProgress;
+  priority: number;
+  status: string;
+  initiativeId?: string;
+  organizationId?: string;
+  applicationIds?: string[];
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Initiative {
+  id: string;
+  name: string;
+  description?: string;
+  status: string;
+  momentum: string;
+  organizationId?: string;
+  applicationIds: string[];
+  goalIds: string[];
+  projectIds?: string[];
+  priority: number;
+  ownerId: string;
+  startedAt?: string;
+  targetAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GoalProgressSummary {
+  goalId: string;
+  objective: string;
+  initiativeName?: string;
+  status: string;
+  pct?: number;
+  trend: string;
+  onTrack: boolean;
+  headline: string;
+}
+
+export interface StrategicInsight {
+  id: string;
+  kind: string;
+  title: string;
+  summary: string;
+  goalId?: string;
+  initiativeId?: string;
+  severity: string;
+  recommendedAction?: string;
+}
+
+export interface GoalContext {
+  goals: Goal[];
+  initiatives: Initiative[];
+  activeGoalIds: string[];
+  activeInitiativeIds: string[];
+  focusGoalId?: string;
+  focusInitiativeId?: string;
+}
+
+export interface DecisionOption {
+  id: string;
+  label: string;
+  description?: string;
+  pros: string[];
+  cons: string[];
+  riskLevel: 'low' | 'medium' | 'high';
+  estimatedImpact?: string;
+  recommended?: boolean;
+}
+
+export interface Decision {
+  id: string;
+  title: string;
+  question: string;
+  rationale?: string;
+  category: string;
+  domainId: string;
+  status: string;
+  priority: number;
+  options: DecisionOption[];
+  chosenOptionId?: string;
+  deadlineAt?: string;
+  goalIds: string[];
+  initiativeIds: string[];
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DecisionRecommendation {
+  id: string;
+  decisionId?: string;
+  signalId?: string;
+  title: string;
+  question: string;
+  recommendedOption: string;
+  tradeoffLine: string;
+  risks: string[];
+  opportunities: string[];
+  confidence: { score: number; factors: string[] };
+  rationale: string;
+  nextAction?: string;
+}
+
+export interface DecisionSummary {
+  id: string;
+  title: string;
+  question: string;
+  status: string;
+  category: string;
+  priority: number;
+  optionCount: number;
+  deadlineAt?: string;
+}
+
+export interface NextAction {
+  id: string;
+  label: string;
+  rationale: string;
+  confidence: number;
+  decisionId?: string;
+}
+
+export interface DecisionContext {
+  decisions: Decision[];
+  openDecisions: Decision[];
+  recentOutcomes: unknown[];
+  pendingReviews: unknown[];
+  focusDecisionId?: string;
+}
+
+export interface WorkspaceGatherCounts {
+  goals: number;
+  initiatives: number;
+  decisions: number;
+  research: number;
+  artifacts: number;
+  applications: number;
+}
+
+export interface Workspace {
+  id: string;
+  title: string;
+  objective: string;
+  type: string;
+  status: string;
+  domainId: string;
+  organizationId?: string;
+  applicationIds: string[];
+  goalIds: string[];
+  initiativeIds: string[];
+  decisionIds: string[];
+  artifactIds: string[];
+  researchIds: string[];
+  keywords: string[];
+  progressSummary?: string;
+  ownerId: string;
+  activatedAt?: string;
+  archivedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FocusSession {
+  id: string;
+  workspaceId?: string;
+  focusKind: string;
+  status: string;
+  ownerId: string;
+  startedAt: string;
+  endedAt?: string;
+  jarvisSessionId?: string;
+  applicationId?: string;
+  summary?: string;
+}
+
+export interface Artifact {
+  id: string;
+  kind: string;
+  title: string;
+  summary?: string;
+  workspaceIds: string[];
+  goalIds: string[];
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceContext {
+  workspace: Workspace;
+  activeSession?: FocusSession;
+  goals: Goal[];
+  initiatives: Initiative[];
+  openDecisions: DecisionSummary[];
+  artifacts: Artifact[];
+}
+
+export interface WorkspaceProgressSummary {
+  workspaceId: string;
+  title: string;
+  objective: string;
+  status: string;
+  headline: string;
+  onTrack: boolean;
+  linkedGoalCount: number;
+  openDecisionCount: number;
+  artifactCount: number;
+}
+
 export interface NewModel {
   id: string;
   provider: string;
@@ -375,7 +877,13 @@ export interface JarvisChatResponse {
   sessionId?: string;
   routedTo?: { kind: 'agent' | 'module'; id: string };
   openApp?: string;
+  suggestedApp?: string;
   codingProjectId?: string;
+  workspaceId?: string;
+  focusSessionId?: string;
+  operatingMode?: string;
+  modeSwitched?: boolean;
+  modeSwitchReason?: string;
   action?: { moduleId: string; action: string; input?: unknown };
   dataAsOf?: string;
   sources?: Array<{ url?: string; title: string; fetchedAt: string; source?: string }>;
@@ -443,4 +951,19 @@ export interface IngestCollectResponse {
   total: number;
   bySource: Record<string, number>;
   collectedAt: string;
+}
+
+export interface MemoryItem {
+  id: string;
+  content: string;
+  tier: 'short' | 'working' | 'long';
+  tags: string[];
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryHit {
+  item: MemoryItem;
+  score: number;
 }

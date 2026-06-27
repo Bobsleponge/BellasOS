@@ -180,3 +180,55 @@ export function looksLikeInvestmentWrite(prompt: string): boolean {
       ))
   );
 }
+
+/** Last segment of a Jarvis contextual prompt — the current user turn only. */
+export function extractLatestUserTurn(contextualPrompt: string): string {
+  const trimmed = contextualPrompt.trim();
+  if (!trimmed) return '';
+  return trimmed.split(/\n\n/).pop()?.trim() ?? trimmed;
+}
+
+export type FinanceReadAction =
+  | 'summary.get'
+  | 'liabilities.list'
+  | 'assets.list'
+  | 'investments.list'
+  | 'transactions.recent';
+
+/** Read-only finance questions — route without LLM action planning. */
+export function looksLikeFinanceReadOnly(prompt: string): boolean {
+  const turn = extractLatestUserTurn(prompt);
+  if (looksLikeInvestmentWrite(turn)) return false;
+  if (/\b(log|record|add|create|buy|purchase|sell|smart transaction)\b/i.test(turn)) return false;
+  return (
+    /\b(debt|debts|liabilit|loan|mortgage|owe|owing|what do i owe|how much do i owe|how much debt|my debts)\b/i.test(
+      turn,
+    ) ||
+    /\b(net worth|how much am i worth|what am i worth|tell me my net worth)\b/i.test(turn) ||
+    /\b(my assets|list assets|show assets)\b/i.test(turn) ||
+    /\b(my investments|my holdings|show holdings|list holdings|what do i own)\b/i.test(turn) ||
+    /\b(recent transactions|recent spending|what did i spend)\b/i.test(turn)
+  );
+}
+
+/** Pick a Finance-Tracker read action from the user message (no LLM). */
+export function resolveFinanceReadAction(prompt: string): FinanceReadAction | null {
+  const turn = extractLatestUserTurn(prompt);
+  if (!looksLikeFinanceReadOnly(turn)) return null;
+
+  if (
+    /\b(debt|debts|liabilit|loan|mortgage|owe|owing|what do i owe|how much do i owe|how much debt|my debts)\b/i.test(
+      turn,
+    )
+  ) {
+    return /\b(list|show|breakdown|details|all my)\b/i.test(turn) ? 'liabilities.list' : 'summary.get';
+  }
+  if (/\b(my assets|list assets|show assets)\b/i.test(turn)) return 'assets.list';
+  if (/\b(my investments|my holdings|show holdings|list holdings|what do i own)\b/i.test(turn)) {
+    return 'investments.list';
+  }
+  if (/\b(recent transactions|recent spending|what did i spend)\b/i.test(turn)) {
+    return 'transactions.recent';
+  }
+  return 'summary.get';
+}

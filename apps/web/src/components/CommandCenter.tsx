@@ -7,11 +7,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useShellStore } from '@/stores/shellStore';
+import { DevHomeSectionLink } from '@/components/dev/DevHomeSectionLink';
+import { DiagnosticsView } from '@/components/dev/DiagnosticsView';
+import { EventsView } from '@/components/dev/EventsView';
+import { LogsView } from '@/components/dev/LogsView';
+import { RoutingView } from '@/components/dev/RoutingView';
 import { JarvisConsole } from './JarvisConsole';
 import {
   OverviewView,
   AgentsView,
-  SecurityView,
   ModuleDetailView,
 } from './views';
 import { HIDDEN_CONSOLE_MODULES } from '@/lib/navigation';
@@ -21,9 +25,12 @@ type View = string;
 
 const SYSTEM_NAV: Array<{ key: View; label: string }> = [
   { key: 'overview', label: 'Overview' },
-  { key: 'ai', label: 'AI & LLMs' },
   { key: 'agents', label: 'Agents' },
-  { key: 'security', label: 'Security & Audit' },
+  { key: 'events', label: 'Events' },
+  { key: 'routing', label: 'Routing' },
+  { key: 'diagnostics', label: 'Diagnostics' },
+  { key: 'logs', label: 'Logs' },
+  { key: 'ai', label: 'AI & LLMs' },
 ];
 
 function NavItem({
@@ -113,8 +120,18 @@ function CommandCenterInner() {
   function renderView() {
     if (view === 'overview') return <OverviewView onNavigate={setView} />;
     if (view === 'ai') return <AiView />;
+    if (view === 'goals') return <DevHomeSectionLink section="goals" label="Goals & Initiatives" />;
+    if (view === 'decisions') return <DevHomeSectionLink section="decisions" label="Decisions" />;
+    if (view === 'workspaces') return <DevHomeSectionLink section="workspaces" label="Workspaces" />;
+    if (view === 'world-signals') {
+      return <DevHomeSectionLink section="intelligence" label="World Intelligence" />;
+    }
     if (view === 'agents') return <AgentsView />;
-    if (view === 'security') return <SecurityView />;
+    if (view === 'events') return <EventsView />;
+    if (view === 'routing') return <RoutingView />;
+    if (view === 'diagnostics') return <DiagnosticsView />;
+    if (view === 'logs') return <LogsView />;
+    if (view === 'security') return <LogsView />;
     if (view.startsWith('module:')) {
       const moduleId = view.slice('module:'.length);
       const projectId = params.get('project');
@@ -131,12 +148,12 @@ function CommandCenterInner() {
           <h1 className="text-lg font-bold text-white tracking-tight">
             Bellas<span className="text-accent">OS</span>
           </h1>
-          <p className="text-[11px] text-muted mt-0.5">Command Center</p>
+          <p className="text-[11px] text-muted mt-0.5">Developer Mode</p>
           <Link
             href="/"
             className="text-[11px] text-accent hover:underline mt-1 inline-block"
           >
-            ← Back to Shell
+            ← Back to Today
           </Link>
         </div>
 

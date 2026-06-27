@@ -32,6 +32,8 @@ export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   name?: string;
+  /** Base64-encoded images for local/cloud vision models. */
+  images?: string[];
 }
 
 export interface CompletionRequest {

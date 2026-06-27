@@ -4,6 +4,7 @@ import { createLogger } from '@bellasos/observability';
 import { RbacService } from './rbac';
 import {
   mintDevToken,
+  mintEmbedToken,
   verifyDevToken,
   verifyKeycloakToken,
   type BellasClaims,
@@ -42,6 +43,21 @@ export class AuthService {
       );
     }
     return mintDevToken(claims, this.config.jwtSecret);
+  }
+
+  /** Mint a short-lived token so Finance-Tracker can establish a session from BellasOS identity. */
+  async issueEmbedToken(principal: Principal, expiresIn = '5m'): Promise<string> {
+    const secret =
+      process.env.BELLASOS_EMBED_SECRET?.trim() || this.config.jwtSecret;
+    const email =
+      typeof principal.attributes?.email === 'string'
+        ? principal.attributes.email
+        : undefined;
+    return mintEmbedToken(
+      { sub: principal.id, email, name: principal.displayName },
+      secret,
+      expiresIn,
+    );
   }
 
   async authenticate(token: string): Promise<Principal> {

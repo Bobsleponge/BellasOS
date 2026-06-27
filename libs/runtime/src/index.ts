@@ -35,6 +35,8 @@ import { createCameraModule } from '@bellasos/module-camera';
 import { createCodingModule } from '@bellasos/module-coding';
 import { createFinanceModule } from '@bellasos/module-finance';
 import { createFinanceTrackerModule } from '@bellasos/module-finance-tracker';
+import { createExecutionModule } from '@bellasos/module-execution';
+import { createWorkspaceModule } from '@bellasos/module-workspace';
 import { getIngestionService } from '@bellasos/core-ingestion';
 
 const log = createLogger({ lib: 'runtime' });
@@ -118,6 +120,8 @@ export class Platform {
       createCodingModule,
       createFinanceModule,
       createFinanceTrackerModule,
+      createExecutionModule,
+      createWorkspaceModule,
     ]) {
       await registry.register(create());
     }

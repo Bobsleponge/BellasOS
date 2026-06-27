@@ -22,4 +22,5 @@ __exportStar(require("./memory"), exports);
 __exportStar(require("./module"), exports);
 __exportStar(require("./agents"), exports);
 __exportStar(require("./api"), exports);
+__exportStar(require("./operating-model"), exports);
 //# sourceMappingURL=index.js.map

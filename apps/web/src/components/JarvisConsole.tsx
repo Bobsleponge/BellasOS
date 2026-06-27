@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useJarvisBootstrap, useJarvisSession } from '@/hooks/useJarvisSession';
 import { useShellStore } from '@/stores/shellStore';
 import { JarvisHistoryPanel } from '@/components/shell/JarvisHistoryPanel';
-import { RequestProgress } from './RequestProgress';
+import { JarvisSuggestedAppButton } from '@/components/shell/JarvisSuggestedAppButton';
 
 /**
  * Jarvis console sidebar — uses shared useJarvisSession for chat + navigation.
@@ -50,6 +50,9 @@ export function JarvisConsole() {
               {line.role === 'user' ? '>' : '*'}
             </span>
             {line.text}
+            {line.role === 'jarvis' && line.suggestedApp ? (
+              <JarvisSuggestedAppButton appId={line.suggestedApp} />
+            ) : null}
           </div>
         ))}
         <RequestProgress active={active} />

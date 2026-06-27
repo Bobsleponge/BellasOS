@@ -104,6 +104,11 @@ const manifest: ModuleManifest = {
     },
     { name: 'summary', description: 'Portfolio summary + allocation', permission: 'portfolio.read' },
     {
+      name: 'performance',
+      description: 'Weighted average ROI from cost basis vs current prices',
+      permission: 'portfolio.read',
+    },
+    {
       name: 'analyze',
       description: 'AI analysis of allocation and risk',
       permission: 'portfolio.read',
@@ -413,6 +418,37 @@ export function createPortfolioModule(): ModuleRuntime {
             pct: total ? Number(((value / total) * 100).toFixed(1)) : 0,
           }));
           return { total, allocation, holdings: holdings.length, baseCurrency: base };
+        }
+        case 'performance': {
+          const holdings = await loadHoldings();
+          const base = await currency();
+          let totalCost = 0;
+          let totalValue = 0;
+          const rows = holdings.map((h) => {
+            const cost = h.costBasis * h.quantity;
+            const price = h.price ?? h.costBasis;
+            const value = price * h.quantity;
+            const returnPct = h.costBasis > 0 ? ((price - h.costBasis) / h.costBasis) * 100 : 0;
+            totalCost += cost;
+            totalValue += value;
+            return {
+              symbol: h.symbol,
+              account: h.account,
+              returnPct: Number(returnPct.toFixed(2)),
+              cost,
+              value,
+            };
+          });
+          const weightedReturnPct =
+            totalCost > 0 ? Number((((totalValue - totalCost) / totalCost) * 100).toFixed(2)) : 0;
+          return {
+            baseCurrency: base,
+            holdings: rows.length,
+            totalCost,
+            totalValue,
+            weightedReturnPct,
+            asOf: new Date().toISOString(),
+          };
         }
         case 'analyze': {
           const holdings = await loadHoldings();

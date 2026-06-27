@@ -10,6 +10,7 @@ import { getConnectorStatuses } from './connectors/status';
 import { fetchUrlText } from './connectors/url-fetch';
 import { webSearch } from './connectors/web-search';
 import { dedupeDocs, filterRelevantDocs } from './context-ranking';
+import { defaultCollectorRegistry } from './collectors/registry';
 import { detectForexQuery, fetchForexRates, formatForexSpokenReply, getDefaultForexPairs, pickPrimaryForexSymbols } from './connectors/forex';
 import { collectYahooFinance } from './connectors/yahoo-finance';
 import { DEFAULT_YAHOO_WATCHLIST } from './feeds/default-feeds';
@@ -88,36 +89,16 @@ export class IngestionService {
     sectors?: string[];
     symbols?: string[];
   }): Promise<WorldCollectionResult> {
-    const sectors = opts?.sectors ?? ['AI', 'Energy', 'Mining', 'Healthcare', 'Macroeconomics'];
-    const symbols = opts?.symbols ?? DEFAULT_YAHOO_WATCHLIST;
-    const bySource: Record<string, number> = {};
-    const all: IngestDocument[] = [];
-
-    const collect = async (label: string, fn: () => Promise<IngestDocument[]>) => {
-      try {
-        const docs = await fn();
-        bySource[label] = docs.length;
-        all.push(...docs);
-        if (docs.length > 0) await saveDocuments(docs);
-      } catch (err) {
-        bySource[label] = 0;
-        log.warn('world collection step failed', { label, error: (err as Error).message });
-      }
-    };
-
-    await collect('rss_feeds', () => pollCuratedRssFeeds(5));
-    await collect('sector_news', () => this.pollSectorNews(sectors.slice(0, 8)));
-    await collect('yahoo_finance', () => collectYahooFinance(symbols));
-    await collect('forex', () => fetchForexRates(getDefaultForexPairs(), ['world-collection']));
-    await collect('sec_edgar', () => fetchRecentSecFilings(25));
-    await collect('reddit', () => fetchRedditFeeds());
-    await collect('finnhub', () => fetchFinnhubSignals());
+    const { total, bySource } = await defaultCollectorRegistry.runAll({
+      sectors: opts?.sectors ?? ['AI', 'Energy', 'Mining', 'Healthcare', 'Macroeconomics'],
+      symbols: opts?.symbols ?? DEFAULT_YAHOO_WATCHLIST,
+    });
 
     this.lastCollectionAt = new Date().toISOString();
-    log.info('world collection complete', { total: all.length, bySource });
+    log.info('world collection complete', { total, bySource });
 
     return {
-      total: all.length,
+      total,
       bySource,
       collectedAt: this.lastCollectionAt,
     };

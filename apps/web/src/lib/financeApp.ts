@@ -1,4 +1,6 @@
 /** Standalone Portfolio / Finance-Tracker app routes (not Command Center). */
+import { moduleAppUrl, userAppUrl } from '@bellasos/contracts';
+
 export const APP_STANDALONE_ROUTES: Record<string, string> = {
   'bellasos.portfolio': '/finance',
   'bellasos.finance': '/finance',
@@ -23,8 +25,14 @@ export function getFinanceTrackerBaseUrl(): string {
 
 export function financeTrackerPath(segments: string[]): string {
   const base = getFinanceTrackerBaseUrl();
-  if (segments.length === 0) return base;
+  if (segments.length === 0) return `${base}/dashboard`;
   return `${base}/${segments.join('/')}`;
+}
+
+/** Relative Finance-Tracker path for embed SSO (BellasOS API builds signed URL). */
+export function financeTrackerEmbedPath(segments: string[]): string {
+  if (segments.length === 0) return '/dashboard';
+  return `/${segments.join('/')}`;
 }
 
 export function financeAppPath(segments: string[]): string {
@@ -33,12 +41,8 @@ export function financeAppPath(segments: string[]): string {
 }
 
 export function appIdToAppUrl(appId: string, extra?: Record<string, string>): string {
-  const standalone = APP_STANDALONE_ROUTES[appId];
-  if (standalone) {
-    if (extra?.section) return `/finance/${extra.section}`;
-    return standalone;
-  }
-  return `/console?view=${encodeURIComponent(
-    appId.startsWith('bellasos.') ? `module:${appId}` : 'overview',
-  )}`;
+  const url = userAppUrl(appId, extra);
+  if (url !== '/') return url;
+  if (appId.startsWith('bellasos.')) return moduleAppUrl(appId);
+  return '/console?view=overview';
 }

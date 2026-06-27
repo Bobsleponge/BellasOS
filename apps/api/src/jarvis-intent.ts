@@ -1,12 +1,42 @@
 import type { AgentInfo } from '@bellasos/contracts';
 import {
+  buildJarvisApplicationCatalog,
+  buildSupplementalModuleHints,
+} from '@bellasos/contracts';
+import {
+  filterAgentsForMode,
+  filterModulesForMode,
+  formatModeRoutingRules,
+  formatReplyScopeForPrompt,
+  looksLikeBriefingRequest,
+  resolveOperatingModeForContext,
+} from '@bellasos/core-jarvis-intelligence';
+import {
   buildAgentCatalog,
-  defaultOpenAppForAgent,
   isLiveMarketDataQuestion,
   looksLikeFinanceQuery,
   looksLikeFinanceWrite,
+  looksLikeFinanceAdvisory,
   resolveAgentType,
 } from './jarvis-orchestrator';
+
+export function looksLikeBriefingIntent(message: string): {
+  match: boolean;
+  deep: boolean;
+} {
+  return looksLikeBriefingRequest(message);
+}
+
+export function looksLikeWorkspaceIntent(message: string): boolean {
+  const m = message.toLowerCase().trim();
+  return (
+    /help me grow harvi|grow harvi/.test(m) ||
+    /(tru africa|truafrica).*(pric|strateg|design|grow)/.test(m) ||
+    /(evaluate another property|property acquisition|real estate acquisition|property due diligence)/.test(m) ||
+    /help me research/.test(m) ||
+    (/(build|ship|coding)/.test(m) && /(project|app|game)/.test(m))
+  );
+}
 
 export type JarvisActionKind = 'read' | 'write' | 'navigate' | 'chat' | 'unknown';
 export type JarvisHandlerType = 'agent' | 'module' | 'chat' | 'open_app' | 'clarify';
@@ -33,19 +63,18 @@ export interface JarvisIntentAnalysis {
   reply?: string;
   /** Instruction passed to the chosen agent/module. */
   prompt?: string;
+  /** When a specialist mode would improve follow-up turns (especially from general). */
+  suggestedOperatingMode?: OperatingMode | null;
+  modeSwitchReason?: string;
 }
 
-const MODULE_ROUTING_HINTS = `
-Modules and key actions:
-- bellasos.coding: task.execute (build new app/game), task.refine (fix/edit existing project — requires active project)
-- bellasos.research: run {subject, kind}
-- bellasos.intelligence: brief.generate {cadence}
-- bellasos.portfolio: analyze, summary, holdings.list (BellasOS internal holdings — NOT live household finance)
-- bellasos.finance-tracker: summary.get, transactions.recent, investments.list, investments.add, income.add, expenses.add, assets.list, liabilities.list, investments.syncToPortfolio (live personal/household finance in ZAR; LIVE stock quotes and USD/ZAR for smart transactions)
-- bellasos.social: draft.create {platform, topic, tone}
-- bellasos.automation: devices.list, device.control {entityId, action}
-- bellasos.camera: events.list
-`;
+type OperatingMode =
+  | 'general'
+  | 'personal'
+  | 'business'
+  | 'wealth'
+  | 'research'
+  | 'focus';
 
 const CLARIFY_THRESHOLD = 0.72;
 
@@ -56,9 +85,17 @@ export function buildJarvisIntentPrompt(input: {
   moduleApps: string[];
   historyBlock?: string;
   activeCodingProjectId?: string;
+  contextBlock?: string;
+  operatingMode?: string;
 }): string {
-  const agentList = buildAgentCatalog(input.agents);
-  const agentNames = input.agents.map((a) => a.name).join(', ');
+  const mode = resolveOperatingModeForContext({ operatingMode: input.operatingMode });
+  const scopedAgents = filterAgentsForMode(input.agents, mode);
+  const scopedModules = filterModulesForMode(input.moduleIds, mode);
+  const agentList = buildAgentCatalog(scopedAgents);
+  const agentNames = scopedAgents.map((a) => a.name).join(', ');
+  const modeRules = formatModeRoutingRules(mode);
+  const applicationCatalog = buildJarvisApplicationCatalog({ moduleIds: scopedModules });
+  const supplementalHints = buildSupplementalModuleHints(scopedModules);
 
   return `You are Jarvis, the BellasOS intent analyst. Read the user message in context and decide what they want, who should handle it, and whether you have enough information to act.
 
@@ -73,7 +110,7 @@ Return ONLY valid JSON (no markdown):
   "handler": {
     "type": "agent" | "module" | "chat" | "open_app" | "clarify",
     "agentType": "<one of: ${agentNames}>",
-    "moduleId": "<module id>",
+    "moduleId": "<module id from: ${scopedModules.join(', ')}>",
     "action": "<module action when type is module>",
     "actionInput": {},
     "openApp": "<app id: ${input.moduleApps.join(', ')}, system.console, ai.studio>"
@@ -82,13 +119,15 @@ Return ONLY valid JSON (no markdown):
   "needsClarification": false,
   "clarifyingQuestions": ["<question if info is missing>"],
   "reply": "<what to say to the user when type is chat, clarify, or open_app>",
-  "prompt": "<clear instruction for the chosen agent/module>"
+  "prompt": "<clear instruction for the chosen agent/module>",
+  "suggestedOperatingMode": "general" | "personal" | "business" | "wealth" | "research" | "focus" | null,
+  "modeSwitchReason": "<why a mode switch helps, if suggestedOperatingMode is set>"
 }
 
 Available agents:
 ${agentList}
 
-${MODULE_ROUTING_HINTS}
+${applicationCatalog}${supplementalHints}
 
 Decision rules:
 1. Understand intent from meaning — do NOT rely on specific keywords. "Do a small transaction of R4000 Nvidia" = finance write (buy shares).
@@ -105,7 +144,12 @@ Decision rules:
 12. For finance share purchases with a Rand amount but no date, proceed — use today unless user specified a past date.
 13. Finance-Tracker provides LIVE stock quotes and USD/ZAR exchange rates. For smart transactions / share purchases, NEVER ask the user for stock price, opening price, or exchange rate — the finance agent fetches them automatically.
 14. "Smart transaction", "make a transaction in the portfolio/finance app", buy shares with Rand amount → agent "finance", actionKind "write". Only clarify if symbol or Rand amount is truly missing.
+15. Daily briefing requests ("brief me", "what's on today", "morning briefing", "deeper briefing", "end of day", "midday check") → handler.type "chat", domain "intelligence", actionKind "read". Do not route to an agent — the controller composes a narrative briefing.
+16. When active context is provided, prefer handlers and replies aligned with the user's current application and operating mode.
+17. ${modeRules}
+18. Match reply depth to the question — narrow question, narrow answer. When handler.type is "chat" or "clarify", keep reply proportional; do not dump unrelated apps, metrics, or background. ${formatReplyScopeForPrompt(input.message)}
 ${input.activeCodingProjectId ? `\nActive Coding Studio project id: ${input.activeCodingProjectId}\n` : ''}
+${input.contextBlock ? `\nActive context:\n${input.contextBlock}\n` : ''}
 ${input.historyBlock ? `\nConversation so far:\n${input.historyBlock}\n` : ''}
 Current user message: ${input.message}`;
 }
@@ -188,10 +232,29 @@ export function normalizeIntentAnalysis(
     clarifyingQuestions: analysis.clarifyingQuestions?.filter(Boolean),
     reply: analysis.reply?.trim(),
     prompt: analysis.prompt?.trim(),
+    suggestedOperatingMode: normalizeSuggestedMode(analysis.suggestedOperatingMode),
+    modeSwitchReason: analysis.modeSwitchReason?.trim(),
   };
 
   if (next.reply && looksLikeIntentJsonLeak(next.reply)) {
     delete next.reply;
+  }
+
+  if (message && looksLikeBriefingIntent(message).match) {
+    next.handler = { type: 'chat' };
+    next.understanding.domain = 'intelligence';
+    next.understanding.actionKind = 'read';
+    next.needsClarification = false;
+    next.confidence = Math.max(next.confidence, 0.92);
+    delete next.reply;
+  }
+
+  if (message && looksLikeFinanceAdvisory(message)) {
+    next.handler = { type: 'chat' };
+    next.understanding.domain = 'wealth';
+    next.understanding.actionKind = 'read';
+    next.needsClarification = false;
+    return next;
   }
 
   if (next.handler.agentType) {
@@ -207,10 +270,6 @@ export function normalizeIntentAnalysis(
     if (fuzzy) next.handler.moduleId = fuzzy;
   }
 
-  if (next.handler.type === 'agent' && next.handler.agentType && !next.handler.openApp) {
-    next.handler.openApp = defaultOpenAppForAgent(next.handler.agentType);
-  }
-
   if (next.handler.type === 'chat' && next.handler.agentType && next.handler.agentType !== 'memory') {
     next.handler.type = 'agent';
     next.prompt = next.prompt ?? next.understanding.summary;
@@ -221,7 +280,7 @@ export function normalizeIntentAnalysis(
     next.handler.type === 'chat' &&
     next.understanding.actionKind !== 'chat'
   ) {
-    next.handler = { type: 'agent', agentType: 'finance', openApp: 'bellasos.portfolio' };
+    next.handler = { type: 'agent', agentType: 'finance' };
     next.prompt = next.prompt ?? next.understanding.summary;
   }
 
@@ -229,15 +288,18 @@ export function normalizeIntentAnalysis(
     next.understanding.domain === 'finance' &&
     (next.handler.agentType === 'memory' || next.handler.agentType === 'portfolio')
   ) {
-    next.handler = { type: 'agent', agentType: 'finance', openApp: 'bellasos.portfolio' };
+    next.handler = { type: 'agent', agentType: 'finance' };
     next.prompt = next.prompt ?? next.understanding.summary;
   }
 
   const routingContext = [message, historyBlock, next.prompt, next.understanding.summary]
     .filter(Boolean)
     .join('\n');
+  if (routingContext && looksLikeFinanceAdvisory(routingContext)) {
+    return next;
+  }
   if (routingContext && (looksLikeFinanceWrite(routingContext) || looksLikeFinanceQuery(routingContext))) {
-    next.handler = { type: 'agent', agentType: 'finance', openApp: 'bellasos.portfolio' };
+    next.handler = { type: 'agent', agentType: 'finance' };
     next.understanding.domain = 'finance';
     if (looksLikeFinanceWrite(routingContext)) {
       next.understanding.actionKind = 'write';
@@ -263,6 +325,22 @@ function clampConfidence(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return 0.5;
   return Math.max(0, Math.min(1, n));
+}
+
+function normalizeSuggestedMode(value: unknown): OperatingMode | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const v = value.trim().toLowerCase();
+  if (
+    v === 'general' ||
+    v === 'personal' ||
+    v === 'business' ||
+    v === 'wealth' ||
+    v === 'research' ||
+    v === 'focus'
+  ) {
+    return v;
+  }
+  return null;
 }
 
 /** Map legacy router plans onto the intent shape for gradual migration. */

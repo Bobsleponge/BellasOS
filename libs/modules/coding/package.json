@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@bellasos/contracts": "*",
+    "@bellasos/module-hybrid": "*",
     "zod": "^3.24.1"
   },
   "nx": {

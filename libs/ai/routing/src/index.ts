@@ -10,6 +10,9 @@ import {
 } from '@bellasos/contracts';
 
 export * from './jarvis-hub';
+export * from './jarvis-hybrid';
+export * from './hybrid-profile';
+export * from './hybrid-orchestrator';
 export interface RoutingContext {
   /** Returns true if the provider has credentials / is reachable. */
   isProviderConfigured(type: ProviderType): boolean;

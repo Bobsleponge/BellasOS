@@ -119,6 +119,29 @@ export function selectModelForTier(
   return bySizeAsc[0]?.id;
 }
 
+export type LocalModelHint = 'coding' | 'general' | 'vision';
+
+/** Pick the best local (Ollama) model for execution after a cloud task brief. */
+export function selectLocalModelForTier(
+  tier: JarvisQueryTier,
+  models: ModelDescriptor[],
+  hint: LocalModelHint = 'general',
+): string | undefined {
+  const locals = models.filter((m) => m.enabled && m.local);
+  if (locals.length === 0) return undefined;
+
+  if (hint === 'coding') {
+    const coder = locals.find((m) => /coder|code/i.test(m.id));
+    if (coder) return coder.id;
+  }
+  if (hint === 'vision') {
+    const vision = locals.find((m) => m.capabilities.includes('vision'));
+    if (vision) return vision.id;
+  }
+
+  return selectModelForTier(tier, locals, () => false);
+}
+
 /**
  * Central Jarvis routing hub: classify the question, pick model + generation
  * settings, and return a plan for the AI gateway.

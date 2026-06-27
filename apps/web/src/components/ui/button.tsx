@@ -12,6 +12,7 @@ const buttonVariants = cva(
         ghost: 'hover:bg-white/10 text-white',
         glass: 'bg-white/5 border border-white/10 text-white hover:bg-white/10 backdrop-blur-md',
         outline: 'border border-edge bg-transparent hover:bg-panel2',
+        destructive: 'bg-red-600/90 text-white hover:bg-red-600 border border-red-500/30',
       },
       size: {
         default: 'h-10 px-4 py-2',

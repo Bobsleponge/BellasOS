@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@bellasos/contracts": "*",
-    "@bellasos/core-external-apps": "*",
+    "@bellasos/module-hybrid": "*",
     "zod": "^3.24.1"
   },
   "nx": {

@@ -30,6 +30,8 @@
       "@bellasos/core-audit": ["libs/core/audit/src/index.ts"],
       "@bellasos/core-notifications": ["libs/core/notifications/src/index.ts"],
       "@bellasos/core-ingestion": ["libs/core/ingestion/src/index.ts"],
+      "@bellasos/core-jarvis-intelligence": ["libs/core/jarvis-intelligence/src/index.ts"],
+      "@bellasos/core-jarvis-cognition": ["libs/core/jarvis-cognition/src/index.ts"],
       "@bellasos/ai-gateway": ["libs/ai/gateway/src/index.ts"],
       "@bellasos/ai-providers": ["libs/ai/providers/src/index.ts"],
       "@bellasos/ai-routing": ["libs/ai/routing/src/index.ts"],
@@ -50,6 +52,9 @@
       "@bellasos/module-coding": ["libs/modules/coding/src/index.ts"],
       "@bellasos/module-finance": ["libs/modules/finance/src/index.ts"],
       "@bellasos/module-finance-tracker": ["libs/modules/finance-tracker/src/index.ts"],
+      "@bellasos/module-execution": ["libs/modules/execution/src/index.ts"],
+      "@bellasos/module-workspace": ["libs/modules/workspace/src/index.ts"],
+      "@bellasos/module-hybrid": ["libs/modules/hybrid/src/index.ts"],
       "@bellasos/core-external-apps": ["libs/core/external-apps/src/index.ts"]
     }
   },

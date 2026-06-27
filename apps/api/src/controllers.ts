@@ -14,6 +14,7 @@ import { ok, type CallContext } from '@bellasos/contracts';
 import { renderMetrics } from '@bellasos/observability';
 import { PLATFORM, type Platform } from './platform.token';
 import { Public, type AuthedRequest } from './auth.guard';
+import { resolveProviderStatuses } from './ai-provider-utils';
 
 function callCtx(req: AuthedRequest): CallContext {
   return { principal: req.principal, traceId: req.traceId };
@@ -175,8 +176,12 @@ export class AiController {
   }
 
   @Get('providers')
-  providers(@Req() req: AuthedRequest) {
-    return ok(this.platform.ai.providerStatus(), req.traceId);
+  async providers(@Req() req: AuthedRequest) {
+    const statuses = await resolveProviderStatuses(
+      this.platform.ai,
+      this.platform.config,
+    );
+    return ok(statuses, req.traceId);
   }
 
   @Post('discover')

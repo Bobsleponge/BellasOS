@@ -2,38 +2,20 @@
 
 import { useQuery } from '@tanstack/react-query';
 import {
-  BookOpen,
-  Brain,
-  Camera,
-  Code2,
-  Home,
-  Mic,
-  PieChart,
-  Share2,
   Sparkles,
   Terminal,
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
+import { MODULE_ICONS } from '@/lib/applications';
 import { HIDDEN_DESKTOP_MODULES } from '@/lib/navigation';
 import { useConsoleNavigation } from '@/hooks/useConsoleNavigation';
+import { queryKeys } from '@/lib/queryKeys';
 import { AppIcon } from './AppIcon';
 
 const FIXED_APPS = [
   { id: 'system.console', label: 'Command Center', icon: Terminal },
   { id: 'ai.studio', label: 'AI & LLMs', icon: Sparkles },
 ];
-
-const MODULE_ICONS: Record<string, typeof PieChart> = {
-  'bellasos.portfolio': PieChart,
-  'bellasos.research': BookOpen,
-  'bellasos.intelligence': Brain,
-  'bellasos.social': Share2,
-  'bellasos.automation': Home,
-  'bellasos.voice': Mic,
-  'bellasos.camera': Camera,
-  'bellasos.coding': Code2,
-};
 
 export function Desktop() {
   const { navigateToApp } = useConsoleNavigation();

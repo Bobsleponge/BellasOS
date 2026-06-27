@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@bellasos/contracts": "*",
-    "@bellasos/agents-framework": "*"
+    "@bellasos/agents-framework": "*",
+    "@bellasos/module-hybrid": "*"
   },
   "nx": {
     "tags": ["scope:agent"]

@@ -1,0 +1,73 @@
+"use strict";
+/**
+ * Canonical BellasOS entity model.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EXTERNAL_REFERENCE_ENTITY_TYPES = exports.BELLASOS_NATIVE_ENTITY_TYPES = exports.ENTITY_TYPES = void 0;
+exports.ENTITY_TYPES = [
+    'person',
+    'relationship',
+    'role',
+    'organization',
+    'team',
+    'membership',
+    'goal',
+    'initiative',
+    'decision',
+    'outcome',
+    'project',
+    'task',
+    'commitment',
+    'meeting',
+    'event',
+    'topic',
+    'research',
+    'document',
+    'note',
+    'briefing',
+    'alert',
+    'insight',
+    'asset',
+    'liability',
+    'transaction',
+    'financial_snapshot',
+    'financial_decision',
+    'application',
+    'integration',
+    'capability',
+    'resource',
+    'resource_ref',
+    'memory',
+    'context',
+    'session',
+    'agent',
+    'agent_run',
+    'automation',
+    'workflow',
+    'approval',
+    'workspace',
+    'artifact',
+    'work_session',
+];
+exports.BELLASOS_NATIVE_ENTITY_TYPES = [
+    'goal',
+    'initiative',
+    'decision',
+    'outcome',
+    'note',
+    'memory',
+    'topic',
+    'insight',
+    'commitment',
+    'relationship',
+    'role',
+];
+exports.EXTERNAL_REFERENCE_ENTITY_TYPES = [
+    'asset',
+    'liability',
+    'transaction',
+    'financial_snapshot',
+    'resource',
+    'resource_ref',
+];
+//# sourceMappingURL=entities.js.map

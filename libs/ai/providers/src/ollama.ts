@@ -1,4 +1,5 @@
 import type {
+  AICapability,
   CompletionRequest,
   CompletionResponse,
   EmbeddingRequest,
@@ -10,6 +11,14 @@ import { BellasError, ErrorCode } from '@bellasos/contracts';
 import { DEFAULT_MODELS } from '@bellasos/ai-model-registry';
 import { estimateTokens } from './util';
 import { isProviderConfiguredSync, resolveCredentialSync } from './credentials';
+
+const VISION_NAME = /vision|llava|moondream|\bvl\b|vl2|bakllava|minicpm-v/i;
+
+function capabilitiesForModel(name: string): AICapability[] {
+  if (/embed/i.test(name)) return ['embedding'];
+  if (VISION_NAME.test(name)) return ['chat', 'vision', 'reasoning'];
+  return ['chat', 'reasoning', 'tool_use'];
+}
 
 /** Adapter for a local Ollama runtime (privacy-safe, zero-cost). */
 export class OllamaProvider implements ProviderAdapter {
@@ -47,7 +56,8 @@ export class OllamaProvider implements ProviderAdapter {
 
   /** Enrich a model with real context length + parameter size via /api/show. */
   private async describe(name: string): Promise<ModelDescriptor> {
-    const isEmbed = /embed/i.test(name);
+    const capabilities = capabilitiesForModel(name);
+    const isEmbed = capabilities.includes('embedding');
     let contextWindow = isEmbed ? 8192 : 8192;
     let paramsB: number | undefined;
     try {
@@ -78,9 +88,7 @@ export class OllamaProvider implements ProviderAdapter {
       id: name,
       provider: 'ollama',
       displayName: `${name} (local)`,
-      capabilities: isEmbed
-        ? ['embedding']
-        : ['chat', 'reasoning', 'tool_use'],
+      capabilities,
       contextWindow,
       cost: { inputPerMTokensUsd: 0, outputPerMTokensUsd: 0 },
       latencyHint: 4,
@@ -100,7 +108,11 @@ export class OllamaProvider implements ProviderAdapter {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         model: model.id,
-        messages: request.messages,
+        messages: request.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          ...(m.images?.length ? { images: m.images } : {}),
+        })),
         stream: false,
         options: {
           temperature: request.temperature ?? 0.7,

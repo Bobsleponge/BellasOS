@@ -137,7 +137,7 @@ export function createCodingModule(): ModuleRuntime {
           const { goal } = taskExecuteInput.parse(input);
           const result = await executeCodingTask(goal, ctx.ai, async (project) => {
             await ctx.storage.set(`project:${project.id}`, project);
-          });
+          }, call.traceId);
           return result;
         }
 

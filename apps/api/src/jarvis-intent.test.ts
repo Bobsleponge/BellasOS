@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatClarificationReply,
+  looksLikeWorkspaceIntent,
   normalizeIntentAnalysis,
   parseJarvisIntentJson,
   shouldAskForClarification,
@@ -119,5 +120,35 @@ describe('jarvis intent analysis', () => {
       clarifyingQuestions: ['Which stock?', 'How much in Rand?'],
     });
     expect(reply).toContain('Which stock?');
+  });
+
+  it('does not force finance agent for apartment deposit advisory', () => {
+    const analysis = normalizeIntentAnalysis(
+      {
+        understanding: {
+          goal: 'Deposit advice',
+          summary: 'User wants deposit advice',
+          actionKind: 'read',
+          domain: 'finance',
+        },
+        handler: { type: 'agent', agentType: 'finance' },
+        confidence: 0.9,
+        needsClarification: false,
+      },
+      ['finance'],
+      [],
+      'i want to buy an apartment for R1.6million. how much deposit is optimal?',
+    );
+    expect(analysis.handler.type).toBe('chat');
+    expect(analysis.understanding.domain).toBe('wealth');
+  });
+
+  it('does not treat apartment deposit questions as workspace intents', () => {
+    expect(
+      looksLikeWorkspaceIntent(
+        'i want to buy an apartment for R1.6million. how much deposit is optimal?',
+      ),
+    ).toBe(false);
+    expect(looksLikeWorkspaceIntent('help me evaluate another property acquisition')).toBe(true);
   });
 });

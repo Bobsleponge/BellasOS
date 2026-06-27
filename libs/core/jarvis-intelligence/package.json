@@ -1,0 +1,25 @@
+{
+  "name": "@bellasos/core-jarvis-intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --config ../../../vitest.config.ts src/priority.test.ts src/world-relevance.test.ts src/world-opportunities.test.ts"
+  },
+  "dependencies": {
+    "@bellasos/contracts": "*",
+    "@bellasos/core-ingestion": "*",
+    "@bellasos/observability": "*"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.5"
+  },
+  "nx": {
+    "tags": [
+      "scope:core"
+    ]
+  }
+}

@@ -1,23 +1,39 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Hand, Mic, MicOff, Terminal } from 'lucide-react';
+import { Hand } from 'lucide-react';
+import { DEVELOPER_MODE_ROUTE } from '@/lib/applications';
+import { enableDeveloperMode } from '@/lib/devMode';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useVoiceSession } from '@/components/shell/VoiceSessionProvider';
 import { useShellStore } from '@/stores/shellStore';
 
+function connectionLabel(
+  health: Awaited<ReturnType<typeof api.health>> | undefined,
+): { label: string; variant: 'success' | 'muted' | 'default' } {
+  if (!health || health.status !== 'ok') {
+    return { label: 'Offline', variant: 'muted' };
+  }
+  const degraded = health.modules.filter(
+    (m) => m.status !== 'enabled' && m.status !== 'started',
+  ).length;
+  if (degraded > 0) {
+    return { label: 'Connected · attention needed', variant: 'default' };
+  }
+  return { label: health.db ? 'Connected' : 'Connected · in-memory', variant: 'success' };
+}
+
 export function Taskbar() {
+  const router = useRouter();
   const [time, setTime] = useState('');
-  const eqState = useShellStore((s) => s.eqState);
+  const logoClicks = useRef(0);
+  const logoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gestureEnabled = useShellStore((s) => s.gestureEnabled);
   const setGestureEnabled = useShellStore((s) => s.setGestureEnabled);
-  const micListening = useShellStore((s) => s.micListening);
-  const { toggleMicListening, supported } = useVoiceSession();
   const { data: health } = useQuery({ queryKey: queryKeys.health, queryFn: api.health });
 
   useEffect(() => {
@@ -30,57 +46,43 @@ export function Taskbar() {
     return () => clearInterval(t);
   }, []);
 
-  const dbOk = health?.db;
-  const degradedModules =
-    health?.modules.filter((m) => m.status !== 'enabled' && m.status !== 'started') ?? [];
+  const connection = connectionLabel(health);
+
+  function onLogoClick() {
+    logoClicks.current += 1;
+    if (logoTimer.current) clearTimeout(logoTimer.current);
+    logoTimer.current = setTimeout(() => {
+      logoClicks.current = 0;
+    }, 600);
+    if (logoClicks.current >= 3) {
+      logoClicks.current = 0;
+      enableDeveloperMode();
+      router.push(DEVELOPER_MODE_ROUTE);
+    }
+  }
 
   return (
     <footer className="fixed bottom-0 inset-x-0 h-14 glass-panel border-t border-white/10 flex items-center justify-between px-4 z-50">
       <div className="flex items-center gap-3">
-        <span className="text-sm font-semibold text-white">
+        <button
+          type="button"
+          onClick={onLogoClick}
+          className="text-sm font-semibold text-white hover:text-accent transition-colors"
+          title="Triple-click for Developer Mode"
+        >
           Bellas<span className="text-accent">OS</span>
-        </span>
-        <Link href="/console?view=overview">
-          <Badge variant={health?.status === 'ok' ? (dbOk ? 'success' : 'muted') : 'muted'}>
-            {health?.status === 'ok' ? (dbOk ? 'online' : 'in-memory') : '...'}
-          </Badge>
-        </Link>
-        {degradedModules.length > 0 && (
-          <Link href="/console?view=overview">
-            <Badge variant="muted">{degradedModules.length} module issue(s)</Badge>
-          </Link>
-        )}
-        <Badge variant="default">{eqState}</Badge>
+        </button>
+        <Badge variant={connection.variant}>{connection.label}</Badge>
       </div>
 
       <div className="flex items-center gap-3">
-        <Link href="/console?view=overview">
-          <Button variant="ghost" size="sm">
-            <Terminal className="w-4 h-4 mr-1" />
-            Console
-          </Button>
-        </Link>
-        <Button
-          variant={micListening ? 'default' : 'ghost'}
-          size="sm"
-          onClick={toggleMicListening}
-          disabled={!supported || eqState === 'transcribing' || eqState === 'thinking'}
-          title={micListening ? 'Stop listening' : 'Start listening'}
-        >
-          {micListening ? (
-            <Mic className="w-4 h-4 mr-1" />
-          ) : (
-            <MicOff className="w-4 h-4 mr-1" />
-          )}
-          Voice
-        </Button>
         <Button
           variant={gestureEnabled ? 'default' : 'ghost'}
           size="sm"
           onClick={() => setGestureEnabled(!gestureEnabled)}
         >
           <Hand className="w-4 h-4 mr-1" />
-          Gestures
+          <span className="hidden sm:inline">Gestures</span>
         </Button>
         <span className="text-sm text-muted tabular-nums">{time}</span>
       </div>

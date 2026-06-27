@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
 } from '@nestjs/common';
 import { ok } from '@bellasos/contracts';
@@ -15,12 +16,11 @@ import { PLATFORM, type Platform } from './platform.token';
 import type { AuthedRequest } from './auth.guard';
 import { Public } from './auth.guard';
 import { portfolioSyncKeyFromRequest } from './portfolio-sync';
-
-function maskSecret(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  if (value.length <= 8) return '••••••••';
-  return `${value.slice(0, 4)}••••${value.slice(-4)}`;
-}
+import {
+  maskSecret,
+  PROVIDER_TEST_MODELS,
+  resolveProviderStatuses,
+} from './ai-provider-utils';
 
 @Controller('config/modules')
 export class ModuleSettingsController {
@@ -106,6 +106,15 @@ export class SecretsController {
 export class AiConfigController {
   constructor(@Inject(PLATFORM) private readonly platform: Platform) {}
 
+  @Get('providers')
+  async listProviders(@Req() req: AuthedRequest) {
+    const statuses = await resolveProviderStatuses(
+      this.platform.ai,
+      this.platform.config,
+    );
+    return ok(statuses, req.traceId);
+  }
+
   @Put('providers/:provider/credential')
   async setProviderCredential(
     @Req() req: AuthedRequest,
@@ -146,28 +155,55 @@ export class AiConfigController {
     @Req() req: AuthedRequest,
     @Param('provider') provider: string,
   ) {
-    const status = this.platform.ai.providerStatus().find((p) => p.provider === provider);
+    await this.platform.ai.refreshProviderCredentials();
+    const statuses = await resolveProviderStatuses(
+      this.platform.ai,
+      this.platform.config,
+    );
+    const status = statuses.find((p) => p.provider === provider);
     if (!status?.configured) {
-      return ok({ ok: false, error: 'Provider not configured' }, req.traceId);
+      return ok(
+        {
+          ok: false,
+          error:
+            status?.source === 'none'
+              ? 'Provider not configured — save a key below or set it in .env and restart the API'
+              : 'Provider not configured',
+        },
+        req.traceId,
+      );
     }
     if (provider === 'ollama') {
       try {
         const url = (await this.platform.config.getProviderCredential('ollama')) ?? '';
-        const res = await fetch(`${url}/api/version`);
+        const base = url.replace(/\/$/, '');
+        const res = await fetch(`${base}/api/version`);
         const json = await res.json();
         return ok({ ok: res.ok, version: json }, req.traceId);
       } catch (err) {
         return ok({ ok: false, error: (err as Error).message }, req.traceId);
       }
     }
+    const testModel = PROVIDER_TEST_MODELS[provider as keyof typeof PROVIDER_TEST_MODELS];
     try {
       const res = await this.platform.ai.complete({
-        messages: [{ role: 'user', content: 'Reply with: ok' }],
-        model: provider === 'openai' ? 'gpt-4o-mini' : undefined,
+        messages: [{ role: 'user', content: 'Reply with exactly: ok' }],
+        model: testModel,
         taskType: 'general',
         traceId: req.traceId,
       });
-      return ok({ ok: true, model: res.model, sample: res.text.slice(0, 80) }, req.traceId);
+      const sample = res.text.trim().slice(0, 80);
+      const okResult = /ok/i.test(sample);
+      return ok(
+        {
+          ok: okResult,
+          model: res.model,
+          provider: res.provider,
+          sample,
+          error: okResult ? undefined : `Unexpected response: ${sample || '(empty)'}`,
+        },
+        req.traceId,
+      );
     } catch (err) {
       return ok({ ok: false, error: (err as Error).message }, req.traceId);
     }
@@ -226,7 +262,10 @@ export class IntegrationsController {
         linkedAccounts: linked,
       });
     }
-    const providers = this.platform.ai.providerStatus();
+    const providers = await resolveProviderStatuses(
+      this.platform.ai,
+      this.platform.config,
+    );
     return ok({ modules: items, providers }, req.traceId);
   }
 
@@ -372,6 +411,69 @@ export class IntegrationsController {
       .where('module_id', '=', 'bellasos.finance-tracker')
       .where('platform', '=', 'finance-tracker')
       .execute();
+  }
+
+  private normalizeFinanceEmbedPath(path?: string): string {
+    const raw = (path ?? '/dashboard').trim();
+    if (!raw || raw === '/') return '/dashboard';
+    return raw.startsWith('/') ? raw : `/${raw}`;
+  }
+
+  /** Auto-provision server bridge key from env when Jarvis needs Finance-Tracker API access. */
+  private async ensureFinanceTrackerBridge(req: AuthedRequest): Promise<void> {
+    const ns = 'module:bellasos.finance-tracker';
+    const existing = await this.platform.config.getSecret(ns, 'apiKey');
+    if (existing?.trim()) return;
+
+    const envKey = process.env.FINANCE_TRACKER_API_KEY?.trim();
+    if (!envKey) return;
+
+    const baseUrl =
+      process.env.FINANCE_TRACKER_URL?.trim() ||
+      (await this.platform.config.get<string>(ns, 'baseUrl'))?.trim() ||
+      'http://localhost:5000';
+
+    await this.platform.config.setSecret(ns, 'apiKey', envKey);
+    await this.platform.config.set(ns, 'baseUrl', baseUrl);
+
+    if (isDbAvailable()) {
+      await getDb()
+        .insertInto('core.integrations')
+        .values({
+          user_id: req.principal.id,
+          module_id: 'bellasos.finance-tracker',
+          platform: 'finance-tracker',
+          account_name: 'Finance-Tracker (service key)',
+          status: 'connected',
+          token_ref: 'finance-tracker:apiKey',
+          metadata: { baseUrl, source: 'env' },
+        })
+        .onConflict((oc) =>
+          oc.columns(['user_id', 'module_id', 'platform']).doUpdateSet({
+            status: 'connected',
+            metadata: { baseUrl, source: 'env' },
+            updated_at: new Date().toISOString(),
+          }),
+        )
+        .execute();
+    }
+  }
+
+  @Get('finance-tracker/embed-url')
+  async financeTrackerEmbedUrl(
+    @Req() req: AuthedRequest,
+    @Query('path') path?: string,
+  ) {
+    await this.ensureFinanceTrackerBridge(req);
+    const baseUrl =
+      (await this.platform.config.get<string>('module:bellasos.finance-tracker', 'baseUrl'))?.trim() ||
+      process.env.FINANCE_TRACKER_URL?.trim() ||
+      process.env.NEXT_PUBLIC_FINANCE_TRACKER_URL?.trim() ||
+      'http://localhost:5000';
+    const token = await this.platform.auth.issueEmbedToken(req.principal);
+    const nextPath = this.normalizeFinanceEmbedPath(path);
+    const url = `${baseUrl.replace(/\/$/, '')}/auth/bellasos?token=${encodeURIComponent(token)}&next=${encodeURIComponent(nextPath)}`;
+    return ok({ url, baseUrl, nextPath }, req.traceId);
   }
 
   @Post('finance-tracker/connect')

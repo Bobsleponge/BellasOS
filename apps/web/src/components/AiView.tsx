@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type NewModel } from '@/lib/api';
+import { api, type NewModel, type ProviderStatus } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { Panel } from './Panel';
 
@@ -20,16 +20,37 @@ const ENV_KEY: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
   google: 'GOOGLE_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
-  ollama: 'OLLAMA_BASE_URL (runs locally, no key)',
+  ollama: 'OLLAMA_BASE_URL',
   mock: 'none (offline fallback)',
 };
 
+function sourceLabel(source?: ProviderStatus['source']): string {
+  switch (source) {
+    case 'ui':
+      return 'saved in AI Studio';
+    case 'env':
+      return 'from .env (restart API after changes)';
+    default:
+      return 'not configured';
+  }
+}
+
 export function AiView() {
   const qc = useQueryClient();
-  const { data: models } = useQuery({ queryKey: queryKeys.models, queryFn: api.models });
-  const { data: providers } = useQuery({
+  const {
+    data: models,
+    isLoading: modelsLoading,
+    error: modelsError,
+  } = useQuery({ queryKey: queryKeys.models, queryFn: api.models });
+  const {
+    data: providers,
+    isLoading: providersLoading,
+    error: providersError,
+    refetch: refetchProviders,
+  } = useQuery({
     queryKey: queryKeys.providers,
     queryFn: api.providers,
+    refetchOnWindowFocus: true,
   });
   const { data: usage } = useQuery({
     queryKey: queryKeys.aiUsage,
@@ -83,17 +104,36 @@ export function AiView() {
       )}
 
       <Panel title="Providers" subtitle="credentials">
-        <div className="flex justify-between items-center mb-2">
+        {(providersError || modelsError) && (
+          <p className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+            {(providersError ?? modelsError)?.message ??
+              'Could not reach the BellasOS API. Start it with npm run dev:api.'}
+          </p>
+        )}
+        <div className="flex justify-between items-center mb-2 gap-2">
           <span className="text-xs text-muted">
-            {enabledCount}/{(models ?? []).length} models enabled
+            {providersLoading
+              ? 'Checking providers…'
+              : `${enabledCount}/${(models ?? []).length} models enabled`}
           </span>
-          <button
-            onClick={() => discover.mutate()}
-            disabled={discover.isPending}
-            className="text-xs px-3 py-1.5 rounded-lg border border-edge text-muted hover:text-accent hover:border-accent disabled:opacity-50"
-          >
-            {discover.isPending ? 'Scanning...' : 'Scan local (Ollama) models'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => refetchProviders()}
+              disabled={providersLoading}
+              className="text-xs px-3 py-1.5 rounded-lg border border-edge text-muted hover:text-accent hover:border-accent disabled:opacity-50"
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={() => discover.mutate()}
+              disabled={discover.isPending}
+              className="text-xs px-3 py-1.5 rounded-lg border border-edge text-muted hover:text-accent hover:border-accent disabled:opacity-50"
+            >
+              {discover.isPending ? 'Scanning...' : 'Scan local (Ollama) models'}
+            </button>
+          </div>
         </div>
         {discover.data && (
           <p className="text-xs text-green-400 mb-2">
@@ -104,27 +144,34 @@ export function AiView() {
           {(providers ?? []).map((p) => (
             <div
               key={p.provider}
-              className="flex items-center gap-2 bg-panel2 border border-edge rounded-lg px-3 py-2"
+              className="flex items-start gap-2 bg-panel2 border border-edge rounded-lg px-3 py-2"
             >
               <span
-                className={`h-2 w-2 rounded-full ${p.configured ? 'bg-green-400' : 'bg-muted'}`}
+                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${p.configured ? 'bg-green-400' : 'bg-muted'}`}
               />
               <div className="min-w-0">
                 <div className="text-sm text-white capitalize">{p.provider}</div>
                 <div className="text-[11px] text-muted truncate">
-                  {p.configured ? 'configured' : ENV_KEY[p.provider] ?? 'set API key'}
+                  {p.configured ? sourceLabel(p.source) : ENV_KEY[p.provider] ?? 'set API key'}
                 </div>
+                {p.configured && p.masked && (
+                  <div className="text-[11px] text-slate-500 font-mono truncate">{p.masked}</div>
+                )}
               </div>
             </div>
           ))}
+          {!providersLoading && (providers ?? []).length === 0 && (
+            <p className="col-span-full text-xs text-muted">No provider data — is the API running?</p>
+          )}
         </div>
         <p className="text-xs text-muted mt-3">
-          Configure providers below or via <code className="text-accent">.env</code>.
-          Ollama uses a base URL (e.g. http://localhost:5001).
+          Keys saved here are stored in the database and take effect immediately. Keys in{' '}
+          <code className="text-accent">.env</code> require an API restart. Ollama uses a base URL
+          (default <code className="text-accent">http://localhost:11434</code>).
         </p>
-        <ProviderCredentials />
+        <ProviderCredentials providers={providers ?? []} />
         <RoutingStrategyPanel />
-        <TestCompletionPanel />
+        <TestCompletionPanel providers={providers ?? []} />
       </Panel>
 
       <Panel title="Models" subtitle="registry">
@@ -176,7 +223,7 @@ export function AiView() {
                   </td>
                 </tr>
               ))}
-              {!models?.length && (
+              {!modelsLoading && !models?.length && (
                 <tr>
                   <td colSpan={7} className="py-3 text-muted text-xs">
                     No models registered.
@@ -193,37 +240,62 @@ export function AiView() {
   );
 }
 
-function ProviderCredentials() {
+function ProviderCredentials({ providers }: { providers: ProviderStatus[] }) {
   const qc = useQueryClient();
   const [keys, setKeys] = useState<Record<string, string>>({});
+  const [saveMsg, setSaveMsg] = useState<Record<string, string>>({});
   const [testResults, setTestResults] = useState<
-    Record<string, { ok: boolean; error?: string; model?: string }>
+    Record<string, { ok: boolean; error?: string; model?: string; provider?: string; sample?: string }>
   >({});
+
+  const statusByProvider = new Map(providers.map((p) => [p.provider, p]));
 
   const save = useMutation({
     mutationFn: ({ provider, value }: { provider: string; value: string }) =>
       api.setProviderCredential(provider, value),
-    onSuccess: () => {
+    onSuccess: (_, { provider }) => {
+      setSaveMsg((m) => ({ ...m, [provider]: 'Saved — provider is live now.' }));
+      setKeys((k) => ({ ...k, [provider]: '' }));
       qc.invalidateQueries({ queryKey: queryKeys.providers });
       qc.invalidateQueries({ queryKey: queryKeys.models });
+      qc.invalidateQueries({ queryKey: queryKeys.integrations });
+    },
+    onError: (err, { provider }) => {
+      setSaveMsg((m) => ({
+        ...m,
+        [provider]: `Save failed: ${(err as Error).message}`,
+      }));
     },
   });
   const clear = useMutation({
     mutationFn: (provider: string) => api.clearProviderCredential(provider),
     onSuccess: (_, provider) => {
+      setSaveMsg((m) => ({
+        ...m,
+        [provider]:
+          'UI credential cleared. Keys in .env still apply until removed and the API is restarted.',
+      }));
       qc.invalidateQueries({ queryKey: queryKeys.providers });
       qc.invalidateQueries({ queryKey: queryKeys.models });
+      qc.invalidateQueries({ queryKey: queryKeys.integrations });
       setTestResults((r) => {
         const next = { ...r };
         delete next[provider];
         return next;
       });
     },
+    onError: (err, provider) => {
+      setSaveMsg((m) => ({
+        ...m,
+        [provider]: `Clear failed: ${(err as Error).message}`,
+      }));
+    },
   });
   const test = useMutation({
     mutationFn: (provider: string) => api.testProvider(provider),
     onSuccess: (data, provider) => {
       setTestResults((r) => ({ ...r, [provider]: data }));
+      setSaveMsg((m) => ({ ...m, [provider]: '' }));
     },
     onError: (err, provider) => {
       setTestResults((r) => ({
@@ -234,50 +306,79 @@ function ProviderCredentials() {
   });
 
   const field =
-    'flex-1 bg-panel2 border border-edge rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent';
+    'flex-1 min-w-[12rem] bg-panel2 border border-edge rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent';
 
   return (
-    <div className="mt-4 space-y-2">
+    <div className="mt-4 space-y-3">
       <p className="text-xs text-accent uppercase tracking-wide">Connect providers</p>
-      {PROVIDERS.filter((p) => p !== 'mock').map((p) => (
-        <div key={p} className="flex flex-wrap gap-2 items-center">
-          <span className="text-xs text-muted w-20 capitalize">{p}</span>
-          <input
-            type="password"
-            className={field}
-            placeholder={p === 'ollama' ? 'http://localhost:5001' : 'API key'}
-            onChange={(e) => setKeys((k) => ({ ...k, [p]: e.target.value }))}
-          />
-          <button
-            onClick={() => keys[p] && save.mutate({ provider: p, value: keys[p]! })}
-            disabled={!keys[p] || save.isPending}
-            className="text-xs px-2 py-1 rounded border border-edge text-accent"
-          >
-            Save
-          </button>
-          <button
-            onClick={() => test.mutate(p)}
-            disabled={test.isPending}
-            className="text-xs px-2 py-1 rounded border border-edge text-muted"
-          >
-            Test
-          </button>
-          <button
-            onClick={() => clear.mutate(p)}
-            disabled={clear.isPending}
-            className="text-xs px-2 py-1 rounded border border-edge text-muted hover:text-red-400"
-          >
-            Clear
-          </button>
-          {testResults[p] && (
-            <span className={`text-xs ${testResults[p]!.ok ? 'text-green-400' : 'text-red-400'}`}>
-              {testResults[p]!.ok
-                ? `OK${testResults[p]!.model ? ` (${testResults[p]!.model})` : ''}`
-                : testResults[p]!.error}
-            </span>
-          )}
-        </div>
-      ))}
+      {PROVIDERS.filter((p) => p !== 'mock').map((p) => {
+        const status = statusByProvider.get(p);
+        const configured = status?.configured ?? false;
+        const result = testResults[p];
+        return (
+          <div key={p} className="space-y-1 rounded-lg border border-edge/60 bg-panel/40 p-3">
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-xs text-white w-20 capitalize font-medium">{p}</span>
+              <span
+                className={`text-[10px] uppercase tracking-wide ${configured ? 'text-green-400' : 'text-muted'}`}
+              >
+                {configured ? sourceLabel(status?.source) : 'not set'}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <input
+                type="password"
+                className={field}
+                value={keys[p] ?? ''}
+                placeholder={
+                  p === 'ollama'
+                    ? 'http://localhost:11434'
+                    : configured
+                      ? 'Paste new key to replace'
+                      : 'Paste API key'
+                }
+                onChange={(e) => {
+                  setKeys((k) => ({ ...k, [p]: e.target.value }));
+                  setSaveMsg((m) => ({ ...m, [p]: '' }));
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => keys[p]?.trim() && save.mutate({ provider: p, value: keys[p]!.trim() })}
+                disabled={!keys[p]?.trim() || save.isPending}
+                className="text-xs px-2 py-1 rounded border border-edge text-accent disabled:opacity-50"
+              >
+                {save.isPending ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                type="button"
+                onClick={() => test.mutate(p)}
+                disabled={!configured || test.isPending}
+                title={configured ? 'Send a test completion' : 'Configure this provider first'}
+                className="text-xs px-2 py-1 rounded border border-edge text-muted disabled:opacity-40"
+              >
+                {test.isPending ? 'Testing…' : 'Test'}
+              </button>
+              <button
+                type="button"
+                onClick={() => clear.mutate(p)}
+                disabled={clear.isPending || status?.source !== 'ui'}
+                className="text-xs px-2 py-1 rounded border border-edge text-muted hover:text-red-400 disabled:opacity-40"
+              >
+                Clear
+              </button>
+            </div>
+            {saveMsg[p] && <p className="text-xs text-muted">{saveMsg[p]}</p>}
+            {result && (
+              <p className={`text-xs ${result.ok ? 'text-green-400' : 'text-red-400'}`}>
+                {result.ok
+                  ? `OK — ${result.provider ?? p}/${result.model ?? 'model'}${result.sample ? `: “${result.sample}”` : ''}`
+                  : result.error ?? 'Test failed'}
+              </p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -308,17 +409,23 @@ function RoutingStrategyPanel() {
   );
 }
 
-function TestCompletionPanel() {
+function TestCompletionPanel({ providers }: { providers: ProviderStatus[] }) {
   const [prompt, setPrompt] = useState('Say hello in one word.');
   const [result, setResult] = useState('');
+  const openAiReady = providers.some((p) => p.provider === 'openai' && p.configured);
   const run = useMutation({
-    mutationFn: () => api.complete(prompt),
+    mutationFn: () => api.complete(prompt, openAiReady ? 'gpt-4o-mini' : undefined),
     onSuccess: (r) => setResult(`${r.provider}/${r.model}: ${r.text}`),
     onError: (e) => setResult(`Error: ${(e as Error).message}`),
   });
   return (
     <div className="mt-4">
       <p className="text-xs text-accent uppercase tracking-wide mb-2">Test completion</p>
+      <p className="text-[11px] text-muted mb-2">
+        {openAiReady
+          ? 'Pinned to gpt-4o-mini while OpenAI is configured.'
+          : 'Uses the routing engine (may pick Ollama or mock when cloud keys are missing).'}
+      </p>
       <div className="flex gap-2">
         <input
           value={prompt}

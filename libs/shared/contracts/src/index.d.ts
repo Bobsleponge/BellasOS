@@ -6,4 +6,5 @@ export * from './memory';
 export * from './module';
 export * from './agents';
 export * from './api';
+export * from './operating-model';
 //# sourceMappingURL=index.d.ts.map

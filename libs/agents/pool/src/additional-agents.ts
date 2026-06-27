@@ -1,11 +1,15 @@
 import type { AgentResult, AgentTask, AgentType } from '@bellasos/contracts';
 import { BaseAgent } from '@bellasos/agents-framework';
+import { getModuleHybridProfile, useCloudLead } from '@bellasos/module-hybrid';
 import {
   buildFinanceMathMessage,
   extractFinanceMathFacts,
   isLiveMarketDataQuestion,
   looksLikeFinanceMath,
+  extractLatestUserTurn,
+  looksLikeFinanceReadOnly,
   looksLikeInvestmentWrite,
+  resolveFinanceReadAction,
   plainFinanceMathMessage,
 } from './finance-math';
 import {
@@ -153,7 +157,9 @@ export class FinanceAgent extends BaseAgent {
   }
 
   private async planFinanceAction(prompt: string, task: AgentTask): Promise<FinanceActionPlan> {
+    const profile = getModuleHybridProfile();
     const res = await this.deps.ai.complete({
+      model: useCloudLead() ? profile.leadModel : undefined,
       taskType: 'reasoning',
       traceId: task.traceId,
       messages: [
@@ -172,14 +178,22 @@ Return ONLY JSON:
 }
 
 Action guide:
-- summary.get: net worth, financial overview, how much am I worth
+- summary.get: financial status/overview/picture/health, or when user wants multiple metrics (assets, liabilities, cashflow) — NOT for a net-worth-only question
+- summary.get also used for net worth-only questions (the reply layer will stay concise)
 - transactions.recent: recent spending, expenses, income activity
 - investments.list: show holdings, stocks, ETFs
 - investments.add: buy/purchase shares, smart transaction, record investment (extract symbol, amountZar, quantity, purchaseDate, accountType). Finance-Tracker fetches live/historical opening prices and USD/ZAR automatically — NEVER ask the user for stock price or exchange rate.
 - investments.syncToPortfolio: sync/update holdings to portfolio
 - expenses.add / income.add: log spending or income
-- assets.list / liabilities.list: property, debts, loans
-- answer: general finance question, currency conversion, exchange rate, Rand/USD math (use live rates — do NOT compute yourself)
+- assets.list: list user asset records
+- liabilities.list: list user existing debts/loans ONLY — for "how much debt", "what do I owe", "list my loans" (READ). NOT for property purchase advice or deposit questions.
+- answer: general finance question, deposit/mortgage advice, currency conversion, exchange rate, Rand/USD math (use live rates — do NOT compute yourself)
+
+Examples (critical):
+- "How much debt do I have?" → summary.get or liabilities.list — NOT investments.add
+- "What is my net worth?" → summary.get — NOT investments.add
+- "Optimal deposit on R1.6m apartment?" → answer (or gather context + advise) — NOT liabilities.list
+- "Buy R4000 of Nvidia" → investments.add
 
 Finance-Tracker has LIVE stock quotes and USD/ZAR rates. For smart transactions, never ask the user to provide prices or FX — the system fetches them when recording.
 
@@ -189,7 +203,7 @@ If a write action is intended but amount, symbol, or other critical detail is mi
         },
         { role: 'user', content: prompt },
       ],
-      maxTokens: 400,
+      maxTokens: useCloudLead() ? Math.min(profile.leadMaxTokens, 600) : 400,
       temperature: 0.1,
     });
 
@@ -531,10 +545,31 @@ If a write action is intended but amount, symbol, or other critical detail is mi
       return { output: summary };
     }
 
+    const userTurn = extractLatestUserTurn(prompt);
+    const readAction = resolveFinanceReadAction(userTurn);
+    if (readAction) {
+      switch (readAction) {
+        case 'summary.get':
+          return { output: await this.finance('summary.get', {}, task) };
+        case 'liabilities.list':
+          return { output: { liabilities: await this.finance('liabilities.list', {}, task) } };
+        case 'assets.list':
+          return { output: { assets: await this.finance('assets.list', {}, task) } };
+        case 'investments.list':
+          return { output: { investments: await this.finance('investments.list', {}, task) } };
+        case 'transactions.recent':
+          return { output: { transactions: await this.finance('transactions.recent', { limit: 15 }, task) } };
+      }
+    }
+
     const plan = await this.planFinanceAction(prompt, task);
+    if (looksLikeFinanceReadOnly(userTurn) && plan.action === 'investments.add') {
+      return { output: await this.finance('summary.get', {}, task) };
+    }
     const investmentWrite =
-      plan.action === 'investments.add' ||
-      (looksLikeInvestmentWrite(prompt) && !this.isWriteAction(plan.action));
+      !looksLikeFinanceReadOnly(userTurn) &&
+      (plan.action === 'investments.add' ||
+        (looksLikeInvestmentWrite(userTurn) && !this.isWriteAction(plan.action)));
 
     if (investmentWrite) {
       if (this.shouldClarifyInvestment(plan, prompt)) {
@@ -575,23 +610,8 @@ If a write action is intended but amount, symbol, or other critical detail is mi
         if (looksLikeFinanceMath(prompt)) {
           return this.answerWithLiveMath(prompt, task);
         }
-        const summary = await this.finance('summary.get', {}, task);
-        const res = await this.deps.ai.complete({
-          taskType: 'reasoning',
-          traceId: task.traceId,
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are a personal finance assistant. Answer using the live Finance-Tracker summary provided. Amounts are ZAR unless stated otherwise. Be concise and actionable. Never guess currency conversions or share counts — those are computed elsewhere.',
-            },
-            {
-              role: 'user',
-              content: `User question: ${prompt}\n\nLive summary:\n${JSON.stringify(summary, null, 2)}`,
-            },
-          ],
-        });
-        return { output: { summary, answer: res.text } };
+        const advised = await this.finance('summary.advise', { question: prompt }, task);
+        return { output: advised };
       }
     }
   }

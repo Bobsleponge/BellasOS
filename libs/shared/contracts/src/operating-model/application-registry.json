@@ -1,0 +1,833 @@
+[
+  {
+    "id": "wealth",
+    "name": "Wealth",
+    "ownership": "hybrid",
+    "description": "Unified personal finance — live household accounts plus portfolio analysis.",
+    "aliases": ["Wealth", "finance app", "portfolio app", "money app"],
+    "jarvisGuide": "Wealth combines Finance Tracker (live household system of record) and BellasOS Portfolio (holdings analysis). Finance Tracker handles net worth, expenses, income, assets, liabilities, and smart share transactions in ZAR — route live money questions to the finance agent via bellasos.finance-tracker. Portfolio handles allocation analysis and holdings view — NOT live household data; route analysis-only questions to the portfolio agent via bellasos.portfolio. Live stock quotes and USD/ZAR are fetched automatically for smart transactions — never ask the user for prices or exchange rates. Account types: TFSA, RA, taxable, pension.",
+    "primaryDomain": "wealth",
+    "secondaryDomains": ["execution", "intelligence"],
+    "systemOfRecord": true,
+    "integration": {
+      "type": "iframe",
+      "standaloneRoute": "/finance"
+    },
+    "moduleIds": ["bellasos.finance-tracker", "bellasos.portfolio"],
+    "capabilities": [
+      {
+        "id": "wealth.summary.get",
+        "name": "Net worth summary",
+        "description": "Live net worth and cashflow from Finance Tracker",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": ["What is my net worth?", "Show my financial information"],
+        "implementation": { "moduleId": "bellasos.finance-tracker", "action": "summary.get" }
+      },
+      {
+        "id": "wealth.investments.add",
+        "name": "Smart transaction",
+        "description": "Record investment purchase with live quotes",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "intentExamples": ["Buy R4000 of Nvidia", "Make a smart transaction"],
+        "implementation": { "moduleId": "bellasos.finance-tracker", "action": "investments.add" }
+      },
+      {
+        "id": "wealth.portfolio.analyze",
+        "name": "Analyze portfolio",
+        "description": "AI portfolio allocation analysis",
+        "access": "analyze",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": ["Analyze my portfolio", "Portfolio allocation"],
+        "implementation": { "moduleId": "bellasos.portfolio", "action": "analyze" }
+      },
+      {
+        "id": "wealth.portfolio.summary",
+        "name": "Portfolio summary",
+        "description": "Holdings and allocation summary",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "intentExamples": ["Portfolio summary", "Show my holdings"],
+        "implementation": { "moduleId": "bellasos.portfolio", "action": "summary" }
+      },
+      {
+        "id": "wealth.portfolio.performance",
+        "name": "Portfolio performance",
+        "description": "Weighted average ROI from holdings cost basis vs live prices",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": ["What is my portfolio return?", "Average ROI on investments"],
+        "implementation": { "moduleId": "bellasos.portfolio", "action": "performance" }
+      }
+    ]
+  },
+  {
+    "id": "finance-tracker",
+    "name": "Finance Tracker",
+    "ownership": "external",
+    "description": "Personal and household finance system of record.",
+    "aliases": ["Finance Tracker", "finance tracker"],
+    "jarvisGuide": "External Finance Tracker app bridged via bellasos.finance-tracker. Live ZAR household finance — net worth, transactions, income, expenses, assets, liabilities, smart transactions. Resolves tickers via Yahoo search; fetches live quotes and USD/ZAR automatically.",
+    "primaryDomain": "wealth",
+    "secondaryDomains": [
+      "execution"
+    ],
+    "systemOfRecord": true,
+    "integration": {
+      "type": "iframe",
+      "baseUrlEnv": "FINANCE_TRACKER_URL",
+      "apiKeyEnv": "FINANCE_TRACKER_API_KEY",
+      "standaloneRoute": "/finance"
+    },
+    "moduleIds": [
+      "bellasos.finance-tracker"
+    ],
+    "capabilities": [
+      {
+        "id": "wealth.connection.status",
+        "name": "Connection status",
+        "description": "Verify connectivity",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "connection.status"
+        }
+      },
+      {
+        "id": "wealth.summary.get",
+        "name": "Net worth summary",
+        "description": "Net worth and cashflow summary",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "What is my net worth?"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "summary.get"
+        }
+      },
+      {
+        "id": "wealth.transactions.recent",
+        "name": "Recent transactions",
+        "description": "Recent income expenses transfers",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "Show recent transactions"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "transactions.recent"
+        }
+      },
+      {
+        "id": "wealth.income.list",
+        "name": "List income",
+        "description": "List income records",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "income.list"
+        }
+      },
+      {
+        "id": "wealth.expenses.list",
+        "name": "List expenses",
+        "description": "List expense records",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "expenses.list"
+        }
+      },
+      {
+        "id": "wealth.assets.list",
+        "name": "List assets",
+        "description": "List assets",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "assets.list"
+        }
+      },
+      {
+        "id": "wealth.liabilities.list",
+        "name": "List liabilities",
+        "description": "List liabilities",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "liabilities.list"
+        }
+      },
+      {
+        "id": "wealth.investments.list",
+        "name": "List investments",
+        "description": "List investments",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "investments.list"
+        }
+      },
+      {
+        "id": "wealth.income.add",
+        "name": "Record income",
+        "description": "Record income",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "intentExamples": [
+          "Log income"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "income.add"
+        }
+      },
+      {
+        "id": "wealth.expenses.add",
+        "name": "Record expense",
+        "description": "Record expense",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "intentExamples": [
+          "Log expense"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "expenses.add"
+        }
+      },
+      {
+        "id": "wealth.investments.add",
+        "name": "Record investment",
+        "description": "Record investment purchase",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "investments.add"
+        }
+      },
+      {
+        "id": "wealth.transfers.add",
+        "name": "Record transfer",
+        "description": "Record account transfer",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "transfers.add"
+        }
+      },
+      {
+        "id": "wealth.investments.quote.get",
+        "name": "Stock quote",
+        "description": "Live stock quote",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "investments.quote.get"
+        }
+      },
+      {
+        "id": "wealth.investments.syncToPortfolio",
+        "name": "Sync to portfolio",
+        "description": "Sync investments to portfolio analysis",
+        "access": "automate",
+        "freshness": "live",
+        "approval": "confirm",
+        "implementation": {
+          "moduleId": "bellasos.finance-tracker",
+          "action": "investments.syncToPortfolio"
+        }
+      }
+    ]
+  },
+  {
+    "id": "harvi-and-co",
+    "name": "Harvi and Co",
+    "ownership": "external",
+    "description": "Harvi and Co venture operations system of record.",
+    "primaryDomain": "ventures",
+    "secondaryDomains": [
+      "execution",
+      "communications"
+    ],
+    "organizationId": "org:harvi-and-co",
+    "systemOfRecord": true,
+    "integration": {
+      "type": "api",
+      "baseUrlEnv": "HARVI_URL",
+      "apiKeyEnv": "HARVI_API_KEY"
+    },
+    "capabilities": [
+      {
+        "id": "venture.harvi.projects.list",
+        "name": "List projects",
+        "description": "List Harvi projects",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "Harvi projects"
+        ]
+      },
+      {
+        "id": "venture.harvi.summary.get",
+        "name": "Venture summary",
+        "description": "Harvi operational summary",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "intentExamples": [
+          "How is Harvi doing?"
+        ]
+      },
+      {
+        "id": "venture.harvi.tasks.create",
+        "name": "Create task",
+        "description": "Create task in Harvi",
+        "access": "write",
+        "freshness": "live",
+        "approval": "required"
+      }
+    ]
+  },
+  {
+    "id": "truafrica",
+    "name": "TruAfrica",
+    "ownership": "external",
+    "description": "TruAfrica venture operations system of record.",
+    "primaryDomain": "ventures",
+    "secondaryDomains": [
+      "execution",
+      "knowledge"
+    ],
+    "organizationId": "org:truafrica",
+    "systemOfRecord": true,
+    "integration": {
+      "type": "api",
+      "baseUrlEnv": "TRUAFRICA_URL",
+      "apiKeyEnv": "TRUAFRICA_API_KEY"
+    },
+    "capabilities": [
+      {
+        "id": "venture.truafrica.projects.list",
+        "name": "List projects",
+        "description": "List TruAfrica projects",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "TruAfrica projects"
+        ]
+      },
+      {
+        "id": "venture.truafrica.summary.get",
+        "name": "Venture summary",
+        "description": "TruAfrica operational summary",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none"
+      },
+      {
+        "id": "venture.truafrica.tasks.create",
+        "name": "Create task",
+        "description": "Create task in TruAfrica",
+        "access": "write",
+        "freshness": "live",
+        "approval": "required"
+      }
+    ]
+  },
+  {
+    "id": "research",
+    "name": "Research",
+    "ownership": "native",
+    "description": "Structured research on companies industries and topics.",
+    "primaryDomain": "knowledge",
+    "secondaryDomains": [
+      "intelligence"
+    ],
+    "systemOfRecord": false,
+    "integration": {
+      "type": "native"
+    },
+    "moduleIds": [
+      "bellasos.research"
+    ],
+    "capabilities": [
+      {
+        "id": "knowledge.research.run",
+        "name": "Run research",
+        "description": "Deep research on a subject",
+        "access": "analyze",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "Research NVIDIA"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.research",
+          "action": "run"
+        }
+      },
+      {
+        "id": "knowledge.research.reports.list",
+        "name": "List reports",
+        "description": "List saved research reports",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.research",
+          "action": "reports.list"
+        }
+      }
+    ]
+  },
+  {
+    "id": "intelligence",
+    "name": "Intelligence",
+    "ownership": "native",
+    "description": "Sector briefings alerts and monitored world intelligence.",
+    "primaryDomain": "intelligence",
+    "secondaryDomains": [
+      "knowledge",
+      "ventures"
+    ],
+    "systemOfRecord": false,
+    "integration": {
+      "type": "native"
+    },
+    "moduleIds": [
+      "bellasos.intelligence",
+      "bellasos.workspace"
+    ],
+    "capabilities": [
+      {
+        "id": "execution.workspace.create",
+        "name": "Create workspace",
+        "description": "Create an objective-centered workspace",
+        "access": "write",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "Help me grow Harvi"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.workspace",
+          "action": "workspace.create"
+        }
+      },
+      {
+        "id": "execution.workspace.context",
+        "name": "Load workspace context",
+        "description": "Aggregated workspace context for Jarvis intelligence",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.workspace",
+          "action": "workspace.context.load"
+        }
+      },
+      {
+        "id": "intelligence.brief.generate",
+        "name": "Generate briefing",
+        "description": "Generate sector briefing",
+        "access": "analyze",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "Brief me"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.intelligence",
+          "action": "brief.generate"
+        }
+      },
+      {
+        "id": "intelligence.briefings.list",
+        "name": "List briefings",
+        "description": "List recent briefings",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.intelligence",
+          "action": "briefings.list"
+        }
+      },
+      {
+        "id": "intelligence.alerts.create",
+        "name": "Create alert",
+        "description": "Create alert rule",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "implementation": {
+          "moduleId": "bellasos.intelligence",
+          "action": "alerts.create"
+        }
+      },
+      {
+        "id": "intelligence.alerts.list",
+        "name": "List alerts",
+        "description": "List alert rules",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.intelligence",
+          "action": "alerts.list"
+        }
+      },
+      {
+        "id": "intelligence.world.collect",
+        "name": "Collect world signals",
+        "description": "Trigger external world collection",
+        "access": "write",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "Collect world intelligence"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.intelligence",
+          "action": "world.memory.summarize"
+        }
+      },
+      {
+        "id": "intelligence.world.signals",
+        "name": "World signals",
+        "description": "Recent world signals with relevance",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.intelligence",
+          "action": "world.signals.list"
+        }
+      },
+      {
+        "id": "intelligence.world.trends",
+        "name": "World trends",
+        "description": "Active sector trends",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.intelligence",
+          "action": "world.trends.list"
+        }
+      }
+    ]
+  },
+  {
+    "id": "coding-studio",
+    "name": "Coding Studio",
+    "ownership": "native",
+    "description": "Build and refine runnable HTML apps and games.",
+    "primaryDomain": "execution",
+    "secondaryDomains": [
+      "ventures"
+    ],
+    "systemOfRecord": false,
+    "integration": {
+      "type": "native"
+    },
+    "moduleIds": [
+      "bellasos.coding"
+    ],
+    "capabilities": [
+      {
+        "id": "execution.coding.task.execute",
+        "name": "Build artifact",
+        "description": "Build runnable HTML app or game",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "intentExamples": [
+          "Build a game"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.coding",
+          "action": "task.execute"
+        }
+      },
+      {
+        "id": "execution.coding.task.refine",
+        "name": "Refine artifact",
+        "description": "Fix or extend coding project",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "implementation": {
+          "moduleId": "bellasos.coding",
+          "action": "task.refine"
+        }
+      },
+      {
+        "id": "execution.coding.project.list",
+        "name": "List projects",
+        "description": "List coding projects",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.coding",
+          "action": "project.list"
+        }
+      }
+    ]
+  },
+  {
+    "id": "automation",
+    "name": "Automation",
+    "ownership": "native",
+    "description": "Smart home and environment control.",
+    "primaryDomain": "environment",
+    "secondaryDomains": [
+      "automation"
+    ],
+    "systemOfRecord": false,
+    "integration": {
+      "type": "api"
+    },
+    "moduleIds": [
+      "bellasos.automation"
+    ],
+    "capabilities": [
+      {
+        "id": "environment.devices.list",
+        "name": "List devices",
+        "description": "List home devices",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "List my lights"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.automation",
+          "action": "devices.list"
+        }
+      },
+      {
+        "id": "environment.device.control",
+        "name": "Control device",
+        "description": "Control home device",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "intentExamples": [
+          "Turn off the lights"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.automation",
+          "action": "device.control"
+        }
+      }
+    ]
+  },
+  {
+    "id": "communications",
+    "name": "Communications",
+    "ownership": "native",
+    "description": "Draft schedule and publish social content.",
+    "primaryDomain": "communications",
+    "secondaryDomains": [
+      "ventures"
+    ],
+    "systemOfRecord": false,
+    "integration": {
+      "type": "native"
+    },
+    "moduleIds": [
+      "bellasos.social"
+    ],
+    "capabilities": [
+      {
+        "id": "communications.draft.create",
+        "name": "Create draft",
+        "description": "AI social post draft",
+        "access": "write",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": [
+          "Draft a LinkedIn post"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.social",
+          "action": "draft.create"
+        }
+      },
+      {
+        "id": "communications.schedule",
+        "name": "Schedule draft",
+        "description": "Schedule draft for publish",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "implementation": {
+          "moduleId": "bellasos.social",
+          "action": "schedule"
+        }
+      },
+      {
+        "id": "communications.publish",
+        "name": "Publish draft",
+        "description": "Publish to connected platform",
+        "access": "publish",
+        "freshness": "live",
+        "approval": "required",
+        "intentExamples": [
+          "Publish the draft"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.social",
+          "action": "publish"
+        }
+      }
+    ]
+  },
+  {
+    "id": "portfolio",
+    "name": "Portfolio",
+    "ownership": "hybrid",
+    "description": "Holdings analysis and allocation synced with Finance Tracker.",
+    "aliases": ["Portfolio analysis", "holdings view"],
+    "jarvisGuide": "BellasOS internal portfolio view via bellasos.portfolio. Use for allocation analysis, holdings summary, and watchlist — NOT for live net worth or household transactions (use finance agent / Finance Tracker instead).",
+    "primaryDomain": "wealth",
+    "secondaryDomains": [
+      "intelligence"
+    ],
+    "systemOfRecord": false,
+    "integration": {
+      "type": "native",
+      "standaloneRoute": "/finance"
+    },
+    "moduleIds": [
+      "bellasos.portfolio"
+    ],
+    "capabilities": [
+      {
+        "id": "wealth.portfolio.summary",
+        "name": "Portfolio summary",
+        "description": "Allocation and holdings summary",
+        "access": "read",
+        "freshness": "cached",
+        "approval": "none",
+        "intentExamples": [
+          "Portfolio summary"
+        ],
+        "implementation": {
+          "moduleId": "bellasos.portfolio",
+          "action": "summary"
+        }
+      },
+      {
+        "id": "wealth.portfolio.analyze",
+        "name": "Analyze portfolio",
+        "description": "AI portfolio analysis",
+        "access": "analyze",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": {
+          "moduleId": "bellasos.portfolio",
+          "action": "analyze"
+        }
+      },
+      {
+        "id": "wealth.portfolio.holdings.add",
+        "name": "Add holding",
+        "description": "Add holding to portfolio view",
+        "access": "write",
+        "freshness": "live",
+        "approval": "confirm",
+        "implementation": {
+          "moduleId": "bellasos.portfolio",
+          "action": "holdings.add"
+        }
+      }
+    ]
+  },
+  {
+    "id": "voice",
+    "name": "Voice",
+    "ownership": "native",
+    "description": "Wake word, speech-to-text, text-to-speech, and voice commands.",
+    "aliases": ["Voice", "speech"],
+    "jarvisGuide": "Voice interface module (bellasos.voice). Processes transcribed commands and TTS — Jarvis chat handles most voice interaction.",
+    "primaryDomain": "systems",
+    "secondaryDomains": ["automation"],
+    "systemOfRecord": false,
+    "integration": { "type": "native" },
+    "moduleIds": ["bellasos.voice"],
+    "capabilities": [
+      {
+        "id": "systems.voice.command",
+        "name": "Process voice command",
+        "description": "Process a transcribed voice command",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "implementation": { "moduleId": "bellasos.voice", "action": "command" }
+      }
+    ]
+  },
+  {
+    "id": "camera",
+    "name": "Camera",
+    "ownership": "native",
+    "description": "Presence, gesture, and motion detection events.",
+    "aliases": ["Camera", "vision"],
+    "jarvisGuide": "Camera module (bellasos.camera) for motion, presence, and gesture events.",
+    "primaryDomain": "environment",
+    "secondaryDomains": ["automation"],
+    "systemOfRecord": false,
+    "integration": { "type": "native" },
+    "moduleIds": ["bellasos.camera"],
+    "capabilities": [
+      {
+        "id": "environment.camera.events",
+        "name": "List camera events",
+        "description": "Recent camera detection events",
+        "access": "read",
+        "freshness": "live",
+        "approval": "none",
+        "intentExamples": ["Show camera events"],
+        "implementation": { "moduleId": "bellasos.camera", "action": "events.list" }
+      }
+    ]
+  }
+]

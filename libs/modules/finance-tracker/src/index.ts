@@ -5,8 +5,10 @@ import {
   type ModuleManifest,
   type ModuleRuntime,
 } from '@bellasos/contracts';
+import { z } from 'zod';
 import { investmentToHolding } from './account-map';
 import { createFinanceTrackerClient } from './client';
+import { runFinanceSummaryAdvisePipeline, type FinanceSummarySnapshot } from './advise';
 import {
   expenseAddInput,
   incomeAddInput,
@@ -26,6 +28,54 @@ function sumAmount(rows: Array<{ amount?: number; net_amount?: number; value?: n
   return rows.reduce((sum, row) => sum + Number(row[field] ?? 0), 0);
 }
 
+async function fetchLiveSummary(ft: Awaited<ReturnType<typeof createFinanceTrackerClient>>): Promise<FinanceSummarySnapshot & { exchangeSource?: string | null }> {
+  const [assets, liabilities, incomes, expenses, investments, exchange] = await Promise.all([
+    ft.request<Array<{ value?: number }>>('/api/assets'),
+    ft.request<Array<{ current_balance?: number; amount?: number }>>('/api/liabilities'),
+    ft.request<Array<{ net_amount?: number; type?: string }>>('/api/income'),
+    ft.request<Array<{ amount?: number; category?: string }>>('/api/expenses'),
+    ft.request<Array<{ quantity?: number; current_price?: number; purchase_price?: number }>>('/api/investments'),
+    ft.request<{ rate?: number; source?: string }>('/api/currency/exchange-rate', { auth: false }).catch(() => null),
+  ]);
+
+  const totalAssets = sumAmount(assets, 'value');
+  const totalLiabilities = liabilities.reduce(
+    (sum, l) => sum + Number(l.current_balance ?? l.amount ?? 0),
+    0,
+  );
+  const totalIncome = incomes
+    .filter((i) => i.type !== 'transfer')
+    .reduce((sum, i) => sum + Number(i.net_amount ?? 0), 0);
+  const totalExpenses = expenses
+    .filter((e) => e.category !== 'transfer')
+    .reduce((sum, e) => sum + Number(e.amount ?? 0), 0);
+  const investmentValue = investments.reduce(
+    (sum, inv) => sum + Number(inv.quantity ?? 0) * Number(inv.current_price ?? inv.purchase_price ?? 0),
+    0,
+  );
+
+  return {
+    currency: 'ZAR',
+    totalAssets,
+    totalLiabilities,
+    investmentValue,
+    netWorth: totalAssets + investmentValue - totalLiabilities,
+    totalIncome,
+    totalExpenses,
+    netCashflow: totalIncome - totalExpenses,
+    counts: {
+      assets: assets.length,
+      liabilities: liabilities.length,
+      investments: investments.length,
+      incomeRecords: incomes.length,
+      expenseRecords: expenses.length,
+    },
+    exchangeRateUsdZar: exchange?.rate ?? null,
+    exchangeSource: exchange?.source ?? null,
+    asOf: new Date().toISOString(),
+  };
+}
+
 const manifest: ModuleManifest = {
   id: 'bellasos.finance-tracker',
   name: 'Finance Tracker Live',
@@ -40,6 +90,12 @@ const manifest: ModuleManifest = {
   actions: [
     { name: 'connection.status', description: 'Check Finance-Tracker connectivity', permission: 'finance-tracker.read' },
     { name: 'summary.get', description: 'Net worth and cashflow summary', permission: 'finance-tracker.read' },
+    {
+      name: 'summary.advise',
+      description: 'Hybrid financial advice from live summary (OpenAI lead/review)',
+      permission: 'finance-tracker.read',
+      inputSchema: z.object({ question: z.string().optional() }),
+    },
     { name: 'transactions.recent', description: 'Recent income, expenses, transfers', permission: 'finance-tracker.read', inputSchema: limitInput },
     { name: 'income.list', description: 'List income records', permission: 'finance-tracker.read' },
     { name: 'expenses.list', description: 'List expense records', permission: 'finance-tracker.read' },
@@ -124,51 +180,18 @@ export function createFinanceTrackerModule(): ModuleRuntime {
         }
         case 'summary.get': {
           const ft = await client();
-          const [assets, liabilities, incomes, expenses, investments, exchange] = await Promise.all([
-            ft.request<Array<{ value?: number }>>('/api/assets'),
-            ft.request<Array<{ current_balance?: number; amount?: number }>>('/api/liabilities'),
-            ft.request<Array<{ net_amount?: number; type?: string }>>('/api/income'),
-            ft.request<Array<{ amount?: number; category?: string }>>('/api/expenses'),
-            ft.request<Array<{ quantity?: number; current_price?: number; purchase_price?: number }>>('/api/investments'),
-            ft.request<{ rate?: number; source?: string }>('/api/currency/exchange-rate', { auth: false }).catch(() => null),
-          ]);
-
-          const totalAssets = sumAmount(assets, 'value');
-          const totalLiabilities = liabilities.reduce(
-            (sum, l) => sum + Number(l.current_balance ?? l.amount ?? 0),
-            0,
-          );
-          const totalIncome = incomes
-            .filter((i) => i.type !== 'transfer')
-            .reduce((sum, i) => sum + Number(i.net_amount ?? 0), 0);
-          const totalExpenses = expenses
-            .filter((e) => e.category !== 'transfer')
-            .reduce((sum, e) => sum + Number(e.amount ?? 0), 0);
-          const investmentValue = investments.reduce(
-            (sum, inv) => sum + Number(inv.quantity ?? 0) * Number(inv.current_price ?? inv.purchase_price ?? 0),
-            0,
-          );
-
-          return {
-            currency: 'ZAR',
-            totalAssets,
-            totalLiabilities,
-            investmentValue,
-            netWorth: totalAssets + investmentValue - totalLiabilities,
-            totalIncome,
-            totalExpenses,
-            netCashflow: totalIncome - totalExpenses,
-            counts: {
-              assets: assets.length,
-              liabilities: liabilities.length,
-              investments: investments.length,
-              incomeRecords: incomes.length,
-              expenseRecords: expenses.length,
-            },
-            exchangeRateUsdZar: exchange?.rate ?? null,
-            exchangeSource: exchange?.source ?? null,
-            asOf: new Date().toISOString(),
-          };
+          return fetchLiveSummary(ft);
+        }
+        case 'summary.advise': {
+          const { question } = z.object({ question: z.string().optional() }).parse(input ?? {});
+          const ft = await client();
+          const summary = await fetchLiveSummary(ft);
+          const hybrid = await runFinanceSummaryAdvisePipeline(ctx.ai, {
+            traceId: call.traceId,
+            summary,
+            question,
+          });
+          return { summary, advice: hybrid.content, hybrid: hybrid.meta };
         }
         case 'transactions.recent': {
           const { limit = 20 } = limitInput.parse(input ?? {});

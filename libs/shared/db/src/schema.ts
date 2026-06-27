@@ -230,6 +230,198 @@ export interface JarvisMessagesTable {
   created_at: Generated<string>;
 }
 
+export interface ExecutionInitiativesTable {
+  id: Generated<string>;
+  owner_id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  momentum: string;
+  organization_id: string | null;
+  application_ids: string[];
+  goal_ids: string[];
+  project_ids: string[];
+  priority: number;
+  started_at: string | null;
+  target_at: string | null;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface ExecutionGoalsTable {
+  id: Generated<string>;
+  owner_id: string;
+  objective: string;
+  category: string;
+  domain_id: string;
+  horizon: string;
+  deadline_at: string | null;
+  target: Record<string, unknown> | null;
+  progress: Record<string, unknown>;
+  priority: number;
+  status: string;
+  initiative_id: string | null;
+  organization_id: string | null;
+  application_ids: string[];
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface ExecutionLinksTable {
+  id: Generated<string>;
+  owner_id: string;
+  type: string;
+  from_id: string;
+  to_id: string;
+  confidence: string;
+  metadata: Record<string, unknown> | null;
+  created_at: Generated<string>;
+}
+
+export interface ExecutionDecisionsTable {
+  id: Generated<string>;
+  owner_id: string;
+  title: string;
+  question: string;
+  rationale: string | null;
+  category: string;
+  domain_id: string;
+  status: string;
+  priority: number;
+  confidence: Record<string, unknown> | null;
+  options: Record<string, unknown>[];
+  chosen_option_id: string | null;
+  deadline_at: string | null;
+  goal_ids: string[];
+  initiative_ids: string[];
+  project_ids: string[];
+  research_ids: string[];
+  signal_ids: string[];
+  application_ids: string[];
+  metadata: Record<string, unknown> | null;
+  decided_at: string | null;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface ExecutionDecisionOutcomesTable {
+  id: Generated<string>;
+  decision_id: string;
+  owner_id: string;
+  chosen_option_id: string;
+  summary: string;
+  actual_impact: string | null;
+  success_rating: number | null;
+  recorded_at: Generated<string>;
+}
+
+export interface ExecutionDecisionReviewsTable {
+  id: Generated<string>;
+  decision_id: string;
+  owner_id: string;
+  due_at: string;
+  status: string;
+  notes: string | null;
+  outcome_assessment: string | null;
+  created_at: Generated<string>;
+  completed_at: string | null;
+}
+
+export interface IntelligenceWorldEnrichmentsTable {
+  id: Generated<string>;
+  owner_id: string;
+  ingest_doc_id: string;
+  sector: string;
+  relevance: Record<string, unknown>;
+  opportunity: Record<string, unknown> | null;
+  composite_score: number;
+  goal_ids: string[];
+  initiative_ids: string[];
+  decision_ids: string[];
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface IntelligenceWorldTrendsTable {
+  id: Generated<string>;
+  owner_id: string;
+  sector: string;
+  direction: string;
+  doc_count: number;
+  window_hours: number;
+  summary: string;
+  confidence: number;
+  linked_goal_ids: string[];
+  created_at: Generated<string>;
+}
+
+export interface IntelligenceWorldSummariesTable {
+  id: Generated<string>;
+  owner_id: string;
+  headline: string;
+  sector: string;
+  relevance_line: string | null;
+  trend_direction: string | null;
+  rhythm: string;
+  created_at: Generated<string>;
+}
+
+export interface ExecutionWorkspacesTable {
+  id: Generated<string>;
+  owner_id: string;
+  title: string;
+  objective: string;
+  type: string;
+  status: string;
+  domain_id: string;
+  organization_id: string | null;
+  application_ids: string[];
+  goal_ids: string[];
+  initiative_ids: string[];
+  decision_ids: string[];
+  artifact_ids: string[];
+  research_ids: string[];
+  memory_ids: string[];
+  world_sector_tags: string[];
+  keywords: string[];
+  progress_summary: string | null;
+  activated_at: string | null;
+  archived_at: string | null;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface ExecutionFocusSessionsTable {
+  id: Generated<string>;
+  owner_id: string;
+  workspace_id: string | null;
+  focus_kind: string;
+  focus_entity: Record<string, unknown> | null;
+  jarvis_session_id: string | null;
+  application_id: string | null;
+  status: string;
+  summary: string | null;
+  started_at: Generated<string>;
+  ended_at: string | null;
+}
+
+export interface ExecutionArtifactsTable {
+  id: Generated<string>;
+  owner_id: string;
+  kind: string;
+  title: string;
+  summary: string | null;
+  content_ref: Record<string, unknown> | null;
+  workspace_ids: string[];
+  goal_ids: string[];
+  initiative_ids: string[];
+  decision_ids: string[];
+  application_ids: string[];
+  memory_id: string | null;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
 export interface Database {
   'core.users': CoreUsersTable;
   'core.roles': CoreRolesTable;
@@ -255,4 +447,16 @@ export interface Database {
   'jarvis.sessions': JarvisSessionsTable;
   'jarvis.messages': JarvisMessagesTable;
   'core.module_kv': ModuleKvTable;
+  'execution.initiatives': ExecutionInitiativesTable;
+  'execution.goals': ExecutionGoalsTable;
+  'execution.links': ExecutionLinksTable;
+  'execution.decisions': ExecutionDecisionsTable;
+  'execution.decision_outcomes': ExecutionDecisionOutcomesTable;
+  'execution.decision_reviews': ExecutionDecisionReviewsTable;
+  'intelligence.world_enrichments': IntelligenceWorldEnrichmentsTable;
+  'intelligence.world_trends': IntelligenceWorldTrendsTable;
+  'intelligence.world_summaries': IntelligenceWorldSummariesTable;
+  'execution.workspaces': ExecutionWorkspacesTable;
+  'execution.focus_sessions': ExecutionFocusSessionsTable;
+  'execution.artifacts': ExecutionArtifactsTable;
 }

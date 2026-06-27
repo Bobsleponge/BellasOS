@@ -7,6 +7,17 @@ import type { ModelDescriptor } from '@bellasos/contracts';
  */
 export const DEFAULT_MODELS: ModelDescriptor[] = [
   {
+    id: 'gpt-4o',
+    provider: 'openai',
+    displayName: 'GPT-4o',
+    capabilities: ['chat', 'reasoning', 'tool_use', 'vision'],
+    contextWindow: 128000,
+    cost: { inputPerMTokensUsd: 2.5, outputPerMTokensUsd: 10 },
+    latencyHint: 2,
+    local: false,
+    enabled: true,
+  },
+  {
     id: 'gpt-5',
     provider: 'openai',
     displayName: 'GPT-5',
@@ -15,7 +26,7 @@ export const DEFAULT_MODELS: ModelDescriptor[] = [
     cost: { inputPerMTokensUsd: 5, outputPerMTokensUsd: 15 },
     latencyHint: 3,
     local: false,
-    enabled: true,
+    enabled: false,
   },
   {
     id: 'gpt-4o-mini',

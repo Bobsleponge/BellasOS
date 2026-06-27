@@ -1,4 +1,8 @@
 import type { AgentInfo } from '@bellasos/contracts';
+import {
+  buildJarvisApplicationCatalog,
+  buildSupplementalModuleHints,
+} from '@bellasos/contracts';
 
 export interface JarvisRouterPlan {
   intent: 'chat' | 'agent' | 'module' | 'open_app';
@@ -32,18 +36,6 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
     'Operational tasks, system health, planning, troubleshooting.',
 };
 
-const MODULE_ROUTING_HINTS = `
-Modules (use intent "module" for direct execution, or "agent" to route through the matching specialist):
-- bellasos.coding: task.execute (build), task.refine (fix/edit existing project)
-- bellasos.research: run {subject, kind}
-- bellasos.intelligence: brief.generate {cadence}
-- bellasos.portfolio: analyze, summary, holdings.list
-- bellasos.finance-tracker: summary.get, transactions.recent, income.list, expenses.list, assets.list, liabilities.list, investments.list, investments.add, income.add, expenses.add, transfers.add, investments.syncToPortfolio
-- bellasos.social: draft.create {platform, topic, tone}
-- bellasos.automation: devices.list, device.control {entityId, action}
-- bellasos.camera: events.list
-`;
-
 export function buildAgentCatalog(agentInfos: AgentInfo[]): string {
   const lines = agentInfos.map((a) => {
     const desc =
@@ -64,6 +56,27 @@ export function resolveAgentType(agentType: string | undefined, registered: stri
   return byType;
 }
 
+/** Build a single user prompt with optional conversation history and extra context. */
+export function contextualUserMessage(
+  message: string,
+  historyBlock?: string,
+  extraContext?: string,
+  replyScopeBlock?: string,
+): string {
+  const parts: string[] = [];
+  if (replyScopeBlock?.trim()) {
+    parts.push(replyScopeBlock.trim());
+  }
+  if (historyBlock?.trim()) {
+    parts.push(`Conversation so far:\n${historyBlock.trim()}`);
+  }
+  if (extraContext?.trim()) {
+    parts.push(extraContext.trim());
+  }
+  parts.push(message.trim());
+  return parts.join('\n\n');
+}
+
 export function buildJarvisRouterPrompt(input: {
   message: string;
   agents: AgentInfo[];
@@ -73,6 +86,8 @@ export function buildJarvisRouterPrompt(input: {
 }): string {
   const agentList = buildAgentCatalog(input.agents);
   const agentNames = input.agents.map((a) => a.name).join(', ');
+  const applicationCatalog = buildJarvisApplicationCatalog({ moduleIds: input.moduleIds });
+  const supplementalHints = buildSupplementalModuleHints(input.moduleIds);
 
   return `You are Jarvis, the BellasOS orchestrator. You can dispatch to ANY registered agent or module.
 Classify the user message and return ONLY valid JSON (no markdown):
@@ -90,7 +105,7 @@ Classify the user message and return ONLY valid JSON (no markdown):
 Available agents:
 ${agentList}
 
-${MODULE_ROUTING_HINTS}
+${applicationCatalog}${supplementalHints}
 
 Routing rules:
 - Prefer intent "agent" with the matching specialist for domain tasks (research, portfolio, coding, social, etc.)
@@ -115,8 +130,8 @@ Current user message: ${input.message}`;
 
 export function defaultOpenAppForAgent(agentType: string): string | undefined {
   const map: Record<string, string> = {
-    portfolio: 'bellasos.portfolio',
-    finance: 'bellasos.portfolio',
+    portfolio: 'wealth',
+    finance: 'wealth',
     research: 'bellasos.research',
     intelligence: 'bellasos.intelligence',
     social: 'bellasos.social',
@@ -125,6 +140,53 @@ export function defaultOpenAppForAgent(agentType: string): string | undefined {
     camera: 'bellasos.camera',
   };
   return map[agentType.toLowerCase()];
+}
+
+export function appLabelFor(appId: string): string {
+  const labels: Record<string, string> = {
+    wealth: 'Wealth',
+    'bellasos.portfolio': 'Wealth',
+    'bellasos.research': 'Research',
+    'bellasos.intelligence': 'Intelligence',
+    'bellasos.coding': 'Coding Studio',
+    'bellasos.social': 'Communications',
+    'bellasos.automation': 'Automation',
+    'bellasos.camera': 'Camera',
+    'ai.studio': 'AI Studio',
+  };
+  return labels[appId] ?? appId.replace(/^bellasos\./, '').replace(/-/g, ' ');
+}
+
+export interface JarvisAppNavigation {
+  openApp?: string;
+  suggestedApp?: string;
+}
+
+/** Auto-open only for explicit navigation or coding deliverables; otherwise offer the app. */
+export function resolveJarvisAppNavigation(opts: {
+  appId?: string;
+  actionKind?: string;
+  agentType?: string;
+  explicitNavigate?: boolean;
+  hasCodingProject?: boolean;
+}): JarvisAppNavigation {
+  const appId = opts.appId?.trim();
+  if (!appId) return {};
+
+  if (opts.explicitNavigate || (opts.agentType === 'coding' && opts.hasCodingProject)) {
+    return { openApp: appId };
+  }
+
+  return { suggestedApp: appId };
+}
+
+export function appendAppOffer(reply: string, appId: string): string {
+  const label = appLabelFor(appId);
+  const offer = `I can open ${label} if you'd like to see more detail there.`;
+  if (reply.includes(offer) || reply.toLowerCase().includes(`open ${label.toLowerCase()}`)) {
+    return reply;
+  }
+  return `${reply.trim()}\n\n${offer}`;
 }
 
 export function looksLikeFinanceQuery(message: string): boolean {
@@ -142,6 +204,16 @@ export function looksLikeFinanceQuery(message: string): boolean {
   || /\b(do|make)\b.*\b(transaction)\b/i.test(message)
   || /\b(intel|intc)\b/i.test(message) && /\b(stock|share|transaction|invest)\b/i.test(message)
   || /\b\d+\s*(rand|r\b)/i.test(message) && /\b(stock|share|shares|apple|aapl|nvidia|nvda|intel|intc|investment)\b/i.test(message);
+}
+
+export function looksLikeFinanceAdvisory(message: string): boolean {
+  return (
+    (/\b(apartment|house|flat|property|home|bond|mortgage|deposit)\b/i.test(message) &&
+      /\b(buy|purchase|afford|optimal|how much|should i|can i afford|recommend|what if)\b/i.test(
+        message,
+      )) ||
+    /\b(optimal|recommended)\b.*\b(deposit|down payment)\b/i.test(message)
+  );
 }
 
 export function looksLikeFinanceWrite(message: string): boolean {
@@ -189,7 +261,6 @@ export function normalizeRouterPlan(plan: JarvisRouterPlan, message: string): Ja
         intent: 'agent',
         agentType: 'finance',
         prompt: next.prompt ?? message,
-        openApp: 'bellasos.portfolio',
       };
     }
   }

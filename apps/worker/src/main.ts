@@ -106,6 +106,8 @@ async function bootstrap(): Promise<void> {
         { cadence: 'daily' },
         { ...SYSTEM_CTX, traceId: crypto.randomUUID() },
       );
+      const { invalidateAllBriefingCaches } = await import('@bellasos/core-jarvis-intelligence');
+      invalidateAllBriefingCaches();
       log.info('daily intelligence briefing generated');
     } catch (err) {
       log.warn('daily briefing failed', { error: (err as Error).message });

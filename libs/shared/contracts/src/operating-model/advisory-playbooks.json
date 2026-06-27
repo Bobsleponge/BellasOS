@@ -1,0 +1,21 @@
+[
+  {
+    "id": "wealth.property-purchase",
+    "domain": "wealth",
+    "applicationIds": ["wealth"],
+    "triggerExamples": [
+      "optimal deposit on an apartment",
+      "how much deposit for a house",
+      "buying property for R1.6 million",
+      "mortgage deposit recommendation",
+      "should I put down 10% or 20%"
+    ],
+    "suggestedContextFetches": [
+      "wealth.summary.get",
+      "wealth.portfolio.summary",
+      "wealth.portfolio.performance"
+    ],
+    "requiredUserInputs": ["purchasePrice", "interestRate", "bondTermYears"],
+    "synthesisGuide": "Compare bond/mortgage cost vs portfolio ROI from live data. Use SA norms: 10% minimum deposit, 20% avoids extra costs. Factor liquidity and existing debt from Wealth summary. Answer the deposit question directly — never dump a raw liability list."
+  }
+]

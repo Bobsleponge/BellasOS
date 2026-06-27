@@ -1,21 +1,37 @@
 export type MemoryTier = 'short' | 'working' | 'long';
 
+import type { MemoryClass } from './operating-model/memory-classes';
+export type { MemoryClass } from './operating-model/memory-classes';
+
 export interface MemoryItem {
   id: string;
   tier: MemoryTier;
+  memoryClass?: MemoryClass;
   ownerId: string;
   content: string;
   tags: string[];
   sourceRef?: Record<string, unknown>;
+  /** Entity IDs this memory is about (knowledge graph links). */
+  about?: string[];
+  domainId?: string;
+  confidence?: 'explicit' | 'inferred' | 'imported';
+  validFrom?: string;
+  validUntil?: string;
   createdAt: string;
 }
 
 export interface MemoryWriteInput {
   tier: MemoryTier;
+  memoryClass?: MemoryClass;
   ownerId: string;
   content: string;
   tags?: string[];
   sourceRef?: Record<string, unknown>;
+  about?: string[];
+  domainId?: string;
+  confidence?: 'explicit' | 'inferred' | 'imported';
+  validFrom?: string;
+  validUntil?: string;
   /** When true (long tier), an embedding is generated for semantic search. */
   embed?: boolean;
 }

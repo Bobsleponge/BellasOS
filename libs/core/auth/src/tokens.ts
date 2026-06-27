@@ -42,6 +42,40 @@ export async function verifyDevToken(
   return payload as BellasClaims;
 }
 
+const EMBED_AUDIENCE = 'bellasos-finance-embed';
+
+/** Short-lived token for Wealth iframe SSO (Finance-Tracker exchange). */
+export async function mintEmbedToken(
+  claims: { sub: string; email?: string; name?: string },
+  secret: string,
+  expiresIn = '5m',
+): Promise<string> {
+  const key = new TextEncoder().encode(secret);
+  return new SignJWT({
+    email: claims.email,
+    name: claims.name,
+    aud: EMBED_AUDIENCE,
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(claims.sub)
+    .setIssuedAt()
+    .setIssuer('bellasos-dev')
+    .setExpirationTime(expiresIn)
+    .sign(key);
+}
+
+export async function verifyEmbedToken(
+  token: string,
+  secret: string,
+): Promise<BellasClaims> {
+  const key = new TextEncoder().encode(secret);
+  const { payload } = await jwtVerify(token, key, {
+    issuer: 'bellasos-dev',
+    audience: EMBED_AUDIENCE,
+  });
+  return payload as BellasClaims;
+}
+
 /** Verify a Keycloak-issued OIDC token via the realm JWKS endpoint. */
 export async function verifyKeycloakToken(
   token: string,
